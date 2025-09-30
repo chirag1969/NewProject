@@ -230,33 +230,7 @@ def load_sales_data() -> pd.DataFrame:
     return tidy
 
 
-def main() -> None:
-    st.title("GP 2025 Sales Performance Dashboard")
-    st.caption(
-        "Explore the GP 2025 workbook and compare channel performance against targets. "
-        "Monetary values are shown using the original workbook units."
-    )
-
-    try:
-        sales_data = load_sales_data()
-    except WorkbookDependencyError:
-        st.error(
-            "Unable to read the workbook because the optional dependency `openpyxl` is "
-            "missing. Install it with `pip install openpyxl` or `pip install -r "
-            "requirements.txt` and rerun the app."
-        )
-        st.stop()
-        return
-    except WorkbookNotFoundError as exc:
-        st.error(str(exc))
-        st.stop()
-        return
-
-    if sales_data.empty:
-        st.error("No sales data found in the workbook.")
-        st.stop()
-        return
-
+def _render_dashboard(sales_data: pd.DataFrame) -> None:
     filter_definitions = [
         ("Listing owner", "listing_owner"),
         ("Platform", "platform"),
@@ -652,6 +626,43 @@ def main() -> None:
             filtered[display_columns].sort_values("achieved_revenue", ascending=False),
             use_container_width=True,
         )
+
+
+def main() -> None:
+    st.title("GP 2025 Sales Performance Dashboard")
+    st.caption(
+        "Explore the GP 2025 workbook and compare channel performance against targets. "
+        "Monetary values are shown using the original workbook units."
+    )
+
+    try:
+        sales_data = load_sales_data()
+    except WorkbookDependencyError:
+        st.error(
+            "Unable to read the workbook because the optional dependency `openpyxl` is "
+            "missing. Install it with `pip install openpyxl` or `pip install -r "
+            "requirements.txt` and rerun the app."
+        )
+        st.stop()
+        return
+    except WorkbookNotFoundError as exc:
+        st.error(str(exc))
+        st.stop()
+        return
+
+    if sales_data.empty:
+        st.error("No sales data found in the workbook.")
+        st.stop()
+        return
+
+    try:
+        _render_dashboard(sales_data)
+    except Exception as exc:  # pragma: no cover - defensive safety net
+        if exc.__class__.__name__ in {"RerunException", "StopException"}:
+            raise
+
+        st.exception(exc)
+        st.stop()
 
 
 if __name__ == "__main__":
