@@ -230,7 +230,85 @@ def load_sales_data() -> pd.DataFrame:
     return tidy
 
 
-def _render_dashboard(sales_data: pd.DataFrame) -> None:
+@st.cache_data
+def load_order_history() -> pd.DataFrame:
+    """Load the order level history used for time-based visualisations."""
+
+    try:
+        orders = pd.read_excel(
+            DATA_PATH,
+            sheet_name="REGULAR-25",
+            header=1,
+            dtype={"Filter Store": "string", "LISTING OWNER": "string"},
+        )
+    except FileNotFoundError as exc:
+        raise WorkbookNotFoundError(
+            f"Workbook not found at '{DATA_PATH}'."
+        ) from exc
+    except ImportError as exc:
+        raise WorkbookDependencyError(
+            "Reading the GP 2025 workbook requires the optional 'openpyxl' package."
+        ) from exc
+    except ValueError:
+        return pd.DataFrame()
+
+    rename_map = {
+        "Checkout": "checkout",
+        "Total Revenue": "total_revenue",
+        "NET": "net",
+        "Filter Store": "filter_store",
+        "LISTING OWNER": "listing_owner",
+        "Platform": "platform",
+        "Plain SKU": "plain_sku",
+        "SKU": "sku",
+    }
+
+    orders = orders.rename(columns=rename_map)
+
+    numeric_columns = [
+        column for column in ("total_revenue", "net") if column in orders.columns
+    ]
+
+    for column in numeric_columns:
+        orders[column] = pd.to_numeric(orders[column], errors="coerce")
+
+    if "checkout" in orders.columns:
+        orders["checkout"] = pd.to_datetime(orders["checkout"], errors="coerce")
+
+    text_columns = [
+        column
+        for column in (
+            "filter_store",
+            "listing_owner",
+            "platform",
+            "plain_sku",
+            "sku",
+        )
+        if column in orders.columns
+    ]
+
+    for column in text_columns:
+        orders[column] = orders[column].astype("string").str.strip()
+        orders[column] = orders[column].fillna("")
+
+    required_columns = ["checkout"] + numeric_columns + text_columns
+    orders = orders[[column for column in required_columns if column in orders.columns]]
+
+    if "checkout" not in orders.columns:
+        return pd.DataFrame()
+
+    if "filter_store" in orders.columns:
+        orders.loc[orders["filter_store"] == "", "filter_store"] = "All Stores"
+
+    orders = orders.dropna(subset=["checkout"])
+
+    if numeric_columns:
+        orders = orders.dropna(subset=numeric_columns, how="all")
+
+    return orders
+
+
+def _render_dashboard(sales_data: pd.DataFrame, order_history: pd.DataFrame) -> None:
     filter_definitions = [
         ("Listing owner", "listing_owner"),
         ("Platform", "platform"),
@@ -268,7 +346,9 @@ def _render_dashboard(sales_data: pd.DataFrame) -> None:
     record_counter = controls[1].empty()
 
     if st.session_state.filters_open:
-        with st.modal("Filter data"):
+        with st.container(border=True):
+            st.subheader("Filter data")
+
             new_selections: dict[str, list[str]] = {}
             for label, column in available_filters:
                 options = sorted(sales_data[column].dropna().unique())
@@ -279,23 +359,27 @@ def _render_dashboard(sales_data: pd.DataFrame) -> None:
                 )
 
             new_top_n = st.slider(
-                "Top SKUs to show", min_value=5, max_value=25, value=st.session_state.top_n, step=1
+                "Top SKUs to show",
+                min_value=5,
+                max_value=25,
+                value=st.session_state.top_n,
+                step=1,
             )
 
             action_cols = st.columns(3)
-            if action_cols[0].button("Apply", use_container_width=True):
+            if action_cols[0].button("Apply", use_container_width=True, key="apply_filters"):
                 st.session_state.filters.update(new_selections)
                 st.session_state.top_n = new_top_n
                 st.session_state.filters_open = False
                 st.experimental_rerun()
 
-            if action_cols[1].button("Reset", use_container_width=True):
+            if action_cols[1].button("Reset", use_container_width=True, key="reset_filters"):
                 st.session_state.filters = {column: [] for _, column in available_filters}
                 st.session_state.top_n = DEFAULT_TOP_N
                 st.session_state.filters_open = False
                 st.experimental_rerun()
 
-            if action_cols[2].button("Close", use_container_width=True):
+            if action_cols[2].button("Close", use_container_width=True, key="close_filters"):
                 st.session_state.filters_open = False
                 st.experimental_rerun()
 
@@ -374,57 +458,71 @@ def _render_dashboard(sales_data: pd.DataFrame) -> None:
                 else:
                     st.metric(label, value, delta=delta)
 
-    channel_summary = (
-        filtered.groupby("channel")[
-            ["total_target_sales", "achieved_revenue", "sales_quantity", "ad_spend"]
-        ]
-        .sum()
-        .sort_values("achieved_revenue", ascending=False)
-    )
+    order_filtered = order_history.copy()
 
-    channel_chart_data = (
-        channel_summary[["total_target_sales", "achieved_revenue"]]
-        .reset_index()
-        .melt(id_vars="channel", var_name="Metric", value_name="value")
-    )
+    for column, selected in filter_selections.items():
+        if not selected or column not in order_filtered.columns:
+            continue
 
-    channel_upper_bound = _nice_upper_bound(channel_chart_data["value"].max())
-
-    channel_chart = (
-        alt.Chart(channel_chart_data)
-        .mark_bar()
-        .encode(
-            x=alt.X("channel:N", title="Channel", axis=alt.Axis(labelAngle=-20)),
-            y=alt.Y(
-                "value:Q",
-                title="Amount",
-                scale=alt.Scale(domain=[0, channel_upper_bound]),
-            ),
-            color=alt.Color("Metric:N", title="Metric", legend=alt.Legend(orient="top")),
-            xOffset="Metric:N",
-            tooltip=[
-                alt.Tooltip("channel:N", title="Channel"),
-                alt.Tooltip("Metric:N", title="Metric"),
-                alt.Tooltip("value:Q", title="Value", format=",.0f"),
-            ],
-        )
-        .properties(height=320)
-    )
+        series = order_filtered[column]
+        if pd.api.types.is_datetime64_any_dtype(series):
+            formatted_series = series.dt.strftime("%Y-%m-%d")
+            order_filtered = order_filtered[formatted_series.isin(selected)]
+        else:
+            order_filtered = order_filtered[series.isin(selected)]
 
     with st.container(border=True):
-        st.subheader("Channel performance")
-        st.altair_chart(channel_chart, use_container_width=True)
-        st.dataframe(
-            channel_summary.rename(
-                columns={
-                    "total_target_sales": "Total target",
-                    "achieved_revenue": "Achieved revenue",
-                    "sales_quantity": "Units sold",
-                    "ad_spend": "Advertising spend",
-                }
-            ),
-            use_container_width=True,
-        )
+        st.subheader("Revenue and net trend")
+
+        if order_filtered.empty:
+            st.info("No order history data available for the current selection.")
+        else:
+            timeline = (
+                order_filtered.dropna(subset=["checkout"])
+                .set_index("checkout")
+                .groupby(pd.Grouper(freq="ME"))[["total_revenue", "net"]]
+                .sum(min_count=1)
+                .dropna(how="all")
+                .reset_index()
+            )
+
+            if timeline.empty:
+                st.info("No order history data available for the current selection.")
+            else:
+                timeline = timeline.rename(columns={"checkout": "period"})
+                timeline_long = timeline.melt(
+                    id_vars="period", var_name="Metric", value_name="value"
+                )
+
+                max_value = timeline_long["value"].max()
+                min_value = timeline_long["value"].min()
+
+                if pd.isna(max_value):
+                    y_scale = alt.Scale()
+                else:
+                    upper = _nice_upper_bound(float(max_value))
+                    lower = 0.0
+                    if pd.notna(min_value):
+                        lower = float(min(min_value, 0.0))
+                    y_scale = alt.Scale(domain=[lower, upper])
+
+                revenue_chart = (
+                    alt.Chart(timeline_long)
+                    .mark_line(point=True)
+                    .encode(
+                        x=alt.X("period:T", title="Checkout month"),
+                        y=alt.Y("value:Q", title="Amount", scale=y_scale),
+                        color=alt.Color("Metric:N", title="Metric"),
+                        tooltip=[
+                            alt.Tooltip("period:T", title="Month", format="%b %Y"),
+                            alt.Tooltip("Metric:N", title="Metric"),
+                            alt.Tooltip("value:Q", title="Value", format=",.0f"),
+                        ],
+                    )
+                    .properties(height=320)
+                )
+
+                st.altair_chart(revenue_chart, use_container_width=True)
 
     metric_options = {
         "Achieved revenue": "achieved_revenue",
@@ -630,13 +728,10 @@ def _render_dashboard(sales_data: pd.DataFrame) -> None:
 
 def main() -> None:
     st.title("GP 2025 Sales Performance Dashboard")
-    st.caption(
-        "Explore the GP 2025 workbook and compare channel performance against targets. "
-        "Monetary values are shown using the original workbook units."
-    )
 
     try:
         sales_data = load_sales_data()
+        order_history = load_order_history()
     except WorkbookDependencyError:
         st.error(
             "Unable to read the workbook because the optional dependency `openpyxl` is "
@@ -656,7 +751,7 @@ def main() -> None:
         return
 
     try:
-        _render_dashboard(sales_data)
+        _render_dashboard(sales_data, order_history)
     except Exception as exc:  # pragma: no cover - defensive safety net
         if exc.__class__.__name__ in {"RerunException", "StopException"}:
             raise
