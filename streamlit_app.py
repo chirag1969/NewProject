@@ -1,4 +1,5 @@
 from pathlib import Path
+import typing as t
 
 import altair as alt
 import math
@@ -10,6 +11,18 @@ st.set_page_config(
     page_title="GP 2025 Sales Dashboard",
     page_icon=":bar_chart:",
     layout="wide",
+)
+
+
+st.markdown(
+    """
+    <style>
+        #MainMenu {visibility: hidden;}
+        header {visibility: hidden;}
+        [data-testid="stToolbar"] {display: none !important;}
+    </style>
+    """,
+    unsafe_allow_html=True,
 )
 
 
@@ -335,53 +348,44 @@ def _render_dashboard(sales_data: pd.DataFrame, order_history: pd.DataFrame) -> 
     if "top_n" not in st.session_state:
         st.session_state.top_n = DEFAULT_TOP_N
 
-    if "filters_open" not in st.session_state:
-        st.session_state.filters_open = False
+    if hasattr(st, "popover"):
+        filter_container = st.popover("Filters", use_container_width=True)
+    else:
+        filter_container = st.container(border=True)
 
-    controls = st.columns([1, 3])
-    with controls[0]:
-        if st.button("Filters", type="primary", use_container_width=True):
-            st.session_state.filters_open = True
+    with filter_container:
+        st.subheader("Filter data")
 
-    record_counter = controls[1].empty()
-
-    if st.session_state.filters_open:
-        with st.container(border=True):
-            st.subheader("Filter data")
-
-            new_selections: dict[str, list[str]] = {}
-            for label, column in available_filters:
-                options = sorted(sales_data[column].dropna().unique())
-                new_selections[column] = st.multiselect(
-                    label,
-                    options,
-                    default=st.session_state.filters.get(column, []),
-                )
-
-            new_top_n = st.slider(
-                "Top SKUs to show",
-                min_value=5,
-                max_value=25,
-                value=st.session_state.top_n,
-                step=1,
+        new_selections: dict[str, list[str]] = {}
+        for label, column in available_filters:
+            options = sorted(sales_data[column].dropna().unique())
+            new_selections[column] = st.multiselect(
+                label,
+                options,
+                default=st.session_state.filters.get(column, []),
             )
 
-            action_cols = st.columns(3)
-            if action_cols[0].button("Apply", use_container_width=True, key="apply_filters"):
-                st.session_state.filters.update(new_selections)
-                st.session_state.top_n = new_top_n
-                st.session_state.filters_open = False
-                st.rerun()
+        new_top_n = st.slider(
+            "Top SKUs to show",
+            min_value=5,
+            max_value=25,
+            value=st.session_state.top_n,
+            step=1,
+        )
 
-            if action_cols[1].button("Reset", use_container_width=True, key="reset_filters"):
-                st.session_state.filters = {column: [] for _, column in available_filters}
-                st.session_state.top_n = DEFAULT_TOP_N
-                st.session_state.filters_open = False
-                st.rerun()
+        action_cols = st.columns(3)
+        if action_cols[0].button("Apply", use_container_width=True, key="apply_filters"):
+            st.session_state.filters.update(new_selections)
+            st.session_state.top_n = new_top_n
+            st.rerun()
 
-            if action_cols[2].button("Close", use_container_width=True, key="close_filters"):
-                st.session_state.filters_open = False
-                st.rerun()
+        if action_cols[1].button("Reset", use_container_width=True, key="reset_filters"):
+            st.session_state.filters = {column: [] for _, column in available_filters}
+            st.session_state.top_n = DEFAULT_TOP_N
+            st.rerun()
+
+        if action_cols[2].button("Close", use_container_width=True, key="close_filters"):
+            st.rerun()
 
     filter_selections = {
         column: st.session_state.filters.get(column, [])
@@ -430,22 +434,18 @@ def _render_dashboard(sales_data: pd.DataFrame, order_history: pd.DataFrame) -> 
 
     delta_pct = (total_achieved / total_target - 1) * 100 if total_target else None
 
-    record_counter.markdown(
-        f"**{len(filtered):,}** channel records after filtering"
-    )
-
     metric_cols = st.columns(4)
     metrics = [
         (
             "Achieved revenue",
-            f"{total_achieved:,.0f}",
-            f"{delta_pct:.1f}%" if delta_pct is not None else "n/a",
+            f"{total_achieved:,.2f}",
+            f"{delta_pct:.2f}%" if delta_pct is not None else "n/a",
         ),
-        ("Target sales", f"{total_target:,.0f}", None),
-        ("Units sold", f"{total_quantity:,.0f}", None),
+        ("Target sales", f"{total_target:,.2f}", None),
+        ("Units sold", f"{total_quantity:,.2f}", None),
         (
             "Weighted IP margin",
-            f"{weighted_margin:.1%}" if pd.notna(weighted_margin) else "n/a",
+            f"{weighted_margin:.2%}" if pd.notna(weighted_margin) else "n/a",
             None,
         ),
     ]
@@ -500,6 +500,7 @@ def _render_dashboard(sales_data: pd.DataFrame, order_history: pd.DataFrame) -> 
                 y_axis = alt.Y(
                     "total_revenue:Q",
                     title="Amount",
+                    axis=alt.Axis(labelAngle=0),
                     scale=alt.Scale(domain=[0, _nice_upper_bound(performance["total_revenue"].max())]),
                 )
 
@@ -508,12 +509,12 @@ def _render_dashboard(sales_data: pd.DataFrame, order_history: pd.DataFrame) -> 
                         "Listing owner:N",
                         sort=list(performance["Listing owner"]),
                         title="Listing owner",
-                        axis=alt.Axis(labelAngle=-40),
+                        axis=alt.Axis(labelAngle=0),
                     ),
                     tooltip=[
                         alt.Tooltip("Listing owner:N", title="Listing owner"),
-                        alt.Tooltip("total_revenue:Q", title="Revenue", format="~s"),
-                        alt.Tooltip("net:Q", title="Net", format="~s"),
+                        alt.Tooltip("total_revenue:Q", title="Revenue", format=",.2f"),
+                        alt.Tooltip("net:Q", title="Net", format=",.2f"),
                     ],
                 )
 
@@ -521,7 +522,7 @@ def _render_dashboard(sales_data: pd.DataFrame, order_history: pd.DataFrame) -> 
 
                 revenue_labels = revenue_bars.mark_text(
                     align="center", baseline="bottom", dy=-4, color="#4C78A8"
-                ).encode(text=alt.Text("total_revenue:Q", format="~s"))
+                ).encode(text=alt.Text("total_revenue:Q", format=",.2f"))
 
                 net_line = base.mark_line(point=True, color="#F58518").encode(
                     y=alt.Y("net:Q", axis=alt.Axis(title=None))
@@ -529,7 +530,7 @@ def _render_dashboard(sales_data: pd.DataFrame, order_history: pd.DataFrame) -> 
 
                 net_labels = net_line.mark_text(
                     align="center", baseline="bottom", dy=-12, color="#F58518"
-                ).encode(text=alt.Text("net:Q", format="~s"))
+                ).encode(text=alt.Text("net:Q", format=",.2f"))
 
                 combined_chart = (
                     alt.layer(revenue_bars, net_line, revenue_labels, net_labels)
@@ -596,11 +597,14 @@ def _render_dashboard(sales_data: pd.DataFrame, order_history: pd.DataFrame) -> 
                             "value:Q",
                             title=selected_metric_label,
                             scale=alt.Scale(domain=[0, category_upper]),
+                            axis=alt.Axis(labelAngle=0),
                         ),
                         y=alt.Y("Category:N", sort="-x"),
                         tooltip=[
                             alt.Tooltip("Category:N", title="Category"),
-                            alt.Tooltip("value:Q", title=selected_metric_label, format=",.0f"),
+                            alt.Tooltip(
+                                "value:Q", title=selected_metric_label, format=",.2f"
+                            ),
                         ],
                     )
                     .properties(height=360)
@@ -622,11 +626,12 @@ def _render_dashboard(sales_data: pd.DataFrame, order_history: pd.DataFrame) -> 
                             "value:Q",
                             title="Achieved revenue",
                             scale=alt.Scale(domain=[0, focus_upper]),
+                            axis=alt.Axis(labelAngle=0),
                         ),
                         y=alt.Y("Focus:N", sort="-x"),
                         tooltip=[
                             alt.Tooltip("Focus:N", title="Focus"),
-                            alt.Tooltip("value:Q", title="Achieved revenue", format=",.0f"),
+                            alt.Tooltip("value:Q", title="Achieved revenue", format=",.2f"),
                         ],
                     )
                     .properties(height=360)
@@ -687,11 +692,12 @@ def _render_dashboard(sales_data: pd.DataFrame, order_history: pd.DataFrame) -> 
                                 "Achieved:Q",
                                 title="Achieved revenue",
                                 scale=alt.Scale(domain=[0, sku_upper]),
+                                axis=alt.Axis(labelAngle=0),
                             ),
                             y=alt.Y("SKU:N", sort="-x"),
                             tooltip=[
                                 alt.Tooltip("SKU:N", title="SKU"),
-                                alt.Tooltip("Achieved:Q", title="Achieved revenue", format=",.0f"),
+                                alt.Tooltip("Achieved:Q", title="Achieved revenue", format=",.2f"),
                             ],
                         )
                         .properties(height=400)
@@ -699,18 +705,28 @@ def _render_dashboard(sales_data: pd.DataFrame, order_history: pd.DataFrame) -> 
 
                     st.subheader(f"Top {len(top_skus)} SKUs by achieved revenue")
                     st.altair_chart(sku_chart, use_container_width=True)
+                    display_table = top_skus.rename(
+                        columns={
+                            "plain_sku": "Plain SKU",
+                            "sku_g": "SKU (G)",
+                            "total_target_sales": "Target",
+                            "achieved_revenue": "Achieved",
+                            "sales_quantity": "Units",
+                            "ad_spend": "Ad spend",
+                            "achievement_ratio": "% to target",
+                        }
+                    )
+
+                    table_formatters: dict[str, t.Callable[[float], str]] = {
+                        "Target": lambda value: f"{value:,.2f}" if pd.notna(value) else "n/a",
+                        "Achieved": lambda value: f"{value:,.2f}" if pd.notna(value) else "n/a",
+                        "Units": lambda value: f"{value:,.2f}" if pd.notna(value) else "n/a",
+                        "Ad spend": lambda value: f"{value:,.2f}" if pd.notna(value) else "n/a",
+                        "% to target": lambda value: f"{value:.2%}" if pd.notna(value) else "n/a",
+                    }
+
                     st.dataframe(
-                        top_skus.rename(
-                            columns={
-                                "plain_sku": "Plain SKU",
-                                "sku_g": "SKU (G)",
-                                "total_target_sales": "Target",
-                                "achieved_revenue": "Achieved",
-                                "sales_quantity": "Units",
-                                "ad_spend": "Ad spend",
-                                "achievement_ratio": "% to target",
-                            }
-                        ),
+                        display_table.style.format(table_formatters),
                         use_container_width=True,
                     )
 
@@ -735,8 +751,26 @@ def _render_dashboard(sales_data: pd.DataFrame, order_history: pd.DataFrame) -> 
             "ad_spend",
             "ip_margin",
         ]
+        sortable = filtered[display_columns].sort_values(
+            "achieved_revenue", ascending=False
+        )
+        value_columns = [
+            column
+            for column in (
+                "total_target_sales",
+                "achieved_revenue",
+                "sales_quantity",
+                "ad_spend",
+                "ip_margin",
+            )
+            if column in sortable.columns
+        ]
+        value_formatters = {
+            column: (lambda value: f"{value:,.2f}" if pd.notna(value) else "n/a")
+            for column in value_columns
+        }
         st.dataframe(
-            filtered[display_columns].sort_values("achieved_revenue", ascending=False),
+            sortable.style.format(value_formatters),
             use_container_width=True,
         )
 
