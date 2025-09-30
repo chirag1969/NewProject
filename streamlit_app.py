@@ -371,17 +371,17 @@ def _render_dashboard(sales_data: pd.DataFrame, order_history: pd.DataFrame) -> 
                 st.session_state.filters.update(new_selections)
                 st.session_state.top_n = new_top_n
                 st.session_state.filters_open = False
-                st.experimental_rerun()
+                st.rerun()
 
             if action_cols[1].button("Reset", use_container_width=True, key="reset_filters"):
                 st.session_state.filters = {column: [] for _, column in available_filters}
                 st.session_state.top_n = DEFAULT_TOP_N
                 st.session_state.filters_open = False
-                st.experimental_rerun()
+                st.rerun()
 
             if action_cols[2].button("Close", use_container_width=True, key="close_filters"):
                 st.session_state.filters_open = False
-                st.experimental_rerun()
+                st.rerun()
 
     filter_selections = {
         column: st.session_state.filters.get(column, [])
@@ -472,57 +472,72 @@ def _render_dashboard(sales_data: pd.DataFrame, order_history: pd.DataFrame) -> 
             order_filtered = order_filtered[series.isin(selected)]
 
     with st.container(border=True):
-        st.subheader("Revenue and net trend")
+        st.subheader("Revenue vs net by listing owner")
 
         if order_filtered.empty:
             st.info("No order history data available for the current selection.")
+        elif "listing_owner" not in order_filtered.columns:
+            st.info("Listing owner information is not available in the order history.")
         else:
-            timeline = (
-                order_filtered.dropna(subset=["checkout"])
-                .set_index("checkout")
-                .groupby(pd.Grouper(freq="ME"))[["total_revenue", "net"]]
+            performance = (
+                order_filtered.copy()
+                .assign(
+                    listing_owner=lambda frame: frame["listing_owner"].fillna("Unassigned")
+                )
+                .groupby("listing_owner")[["total_revenue", "net"]]
                 .sum(min_count=1)
                 .dropna(how="all")
                 .reset_index()
+                .rename(columns={"listing_owner": "Listing owner"})
             )
 
-            if timeline.empty:
+            if performance.empty:
                 st.info("No order history data available for the current selection.")
             else:
-                timeline = timeline.rename(columns={"checkout": "period"})
-                timeline_long = timeline.melt(
-                    id_vars="period", var_name="Metric", value_name="value"
+                performance = performance.sort_values("total_revenue", ascending=False)
+                performance = performance.head(max(st.session_state.top_n, 1))
+
+                y_axis = alt.Y(
+                    "total_revenue:Q",
+                    title="Amount",
+                    scale=alt.Scale(domain=[0, _nice_upper_bound(performance["total_revenue"].max())]),
                 )
 
-                max_value = timeline_long["value"].max()
-                min_value = timeline_long["value"].min()
-
-                if pd.isna(max_value):
-                    y_scale = alt.Scale()
-                else:
-                    upper = _nice_upper_bound(float(max_value))
-                    lower = 0.0
-                    if pd.notna(min_value):
-                        lower = float(min(min_value, 0.0))
-                    y_scale = alt.Scale(domain=[lower, upper])
-
-                revenue_chart = (
-                    alt.Chart(timeline_long)
-                    .mark_line(point=True)
-                    .encode(
-                        x=alt.X("period:T", title="Checkout month"),
-                        y=alt.Y("value:Q", title="Amount", scale=y_scale),
-                        color=alt.Color("Metric:N", title="Metric"),
-                        tooltip=[
-                            alt.Tooltip("period:T", title="Month", format="%b %Y"),
-                            alt.Tooltip("Metric:N", title="Metric"),
-                            alt.Tooltip("value:Q", title="Value", format=",.0f"),
-                        ],
-                    )
-                    .properties(height=320)
+                base = alt.Chart(performance).encode(
+                    x=alt.X(
+                        "Listing owner:N",
+                        sort=list(performance["Listing owner"]),
+                        title="Listing owner",
+                        axis=alt.Axis(labelAngle=-40),
+                    ),
+                    tooltip=[
+                        alt.Tooltip("Listing owner:N", title="Listing owner"),
+                        alt.Tooltip("total_revenue:Q", title="Revenue", format="~s"),
+                        alt.Tooltip("net:Q", title="Net", format="~s"),
+                    ],
                 )
 
-                st.altair_chart(revenue_chart, use_container_width=True)
+                revenue_bars = base.mark_bar(color="#4C78A8").encode(y=y_axis)
+
+                revenue_labels = revenue_bars.mark_text(
+                    align="center", baseline="bottom", dy=-4, color="#4C78A8"
+                ).encode(text=alt.Text("total_revenue:Q", format="~s"))
+
+                net_line = base.mark_line(point=True, color="#F58518").encode(
+                    y=alt.Y("net:Q", axis=alt.Axis(title=None))
+                )
+
+                net_labels = net_line.mark_text(
+                    align="center", baseline="bottom", dy=-12, color="#F58518"
+                ).encode(text=alt.Text("net:Q", format="~s"))
+
+                combined_chart = (
+                    alt.layer(revenue_bars, net_line, revenue_labels, net_labels)
+                    .resolve_scale(y="shared")
+                    .properties(height=360)
+                )
+
+                st.altair_chart(combined_chart, use_container_width=True)
 
     metric_options = {
         "Achieved revenue": "achieved_revenue",
