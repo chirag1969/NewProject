@@ -28,14 +28,21 @@ CHANNEL_LABELS = {
 
 GENERAL_RENAME = {
     "DC LIST": "dc_list",
+    "DC": "dc",
     "CAT": "category",
-    "Sr. No.": "serial_number",
+    "SR. NO.": "serial_number",
     "SKU": "sku",
+    "SKU(G)": "sku_g",
+    "PLAIN SKU": "plain_sku",
     "AMZN": "amazon_manager",
     "EBAY": "ebay_manager",
-    "Website": "website_manager",
+    "WEBSITE": "website_manager",
     "FOCUS": "focus",
     "NEW/OLD": "new_old",
+    "LISTING OWNER": "listing_owner",
+    "PLATFORM": "platform",
+    "CHECKOUT": "checkout",
+    "FILTER STORE": "filter_store",
 }
 
 CHANNEL_RENAME = {
@@ -125,15 +132,49 @@ def load_sales_data() -> pd.DataFrame:
 
     workbook = load_raw_workbook()
 
-    general = workbook["General"].rename(columns=GENERAL_RENAME)
+    cleaned_columns = {}
+    for original in workbook["General"].columns:
+        if isinstance(original, str):
+            key = original.strip()
+        else:
+            key = original
+
+        lookup_key = key.upper() if isinstance(key, str) else key
+        cleaned_columns[original] = GENERAL_RENAME.get(lookup_key, key)
+
+    general = workbook["General"].rename(columns=cleaned_columns)
     general = general.dropna(subset=["sku"]).copy()
     general["sku"] = general["sku"].astype(str).str.strip()
     general = general[general["sku"].str.lower() != "nan"]
 
-    general["focus"] = general["focus"].fillna("Unspecified")
-    general["category"] = general["category"].fillna("Uncategorised")
-    general["dc_list"] = general["dc_list"].fillna("Unknown")
-    general["new_old"] = general["new_old"].fillna("Unspecified")
+    def _ensure_text_column(frame: pd.DataFrame, column: str, default: str) -> None:
+        if column not in frame.columns:
+            frame[column] = default
+        frame[column] = frame[column].astype("string").str.strip()
+        frame[column] = frame[column].fillna(default)
+
+    _ensure_text_column(general, "focus", "Unspecified")
+    _ensure_text_column(general, "category", "Uncategorised")
+    _ensure_text_column(general, "dc_list", "Unknown")
+    _ensure_text_column(general, "new_old", "Unspecified")
+    _ensure_text_column(general, "listing_owner", "Unassigned")
+    _ensure_text_column(general, "checkout", "Not set")
+    _ensure_text_column(general, "filter_store", "All Stores")
+
+    if "dc" not in general.columns:
+        general["dc"] = general["dc_list"]
+    _ensure_text_column(general, "dc", "Unknown")
+
+    if "plain_sku" not in general.columns:
+        general["plain_sku"] = general["sku"]
+    _ensure_text_column(general, "plain_sku", "Unspecified")
+
+    if "sku_g" not in general.columns:
+        general["sku_g"] = general["sku"]
+    _ensure_text_column(general, "sku_g", "Unspecified")
+
+    if "platform" in general.columns:
+        general["platform"] = general["platform"].astype("string").str.strip()
 
     channel_frames = []
     first_level = workbook.columns.get_level_values(0)
@@ -148,6 +189,11 @@ def load_sales_data() -> pd.DataFrame:
         combined = pd.concat([general, channel], axis=1)
         combined = combined.dropna(subset=NUMERIC_COLUMNS, how="all")
         combined = combined.assign(channel=display_name)
+
+        if "platform" not in combined.columns:
+            combined["platform"] = display_name
+        else:
+            combined["platform"] = combined["platform"].fillna(display_name)
 
         channel_frames.append(combined)
 
@@ -193,33 +239,24 @@ def main() -> None:
 
     st.sidebar.header("Filters")
 
-    channel_options = list(CHANNEL_LABELS.values())
-    selected_channels = st.sidebar.multiselect(
-        "Channels",
-        channel_options,
-        default=channel_options,
-    )
+    filter_definitions = [
+        ("Listing owner", "listing_owner"),
+        ("Platform", "platform"),
+        ("Category", "category"),
+        ("Checkout", "checkout"),
+        ("SKU (G)", "sku_g"),
+        ("Plain SKU", "plain_sku"),
+        ("DC", "dc"),
+        ("Filter store", "filter_store"),
+    ]
 
-    category_options = sorted(sales_data["category"].dropna().unique())
-    selected_categories = st.sidebar.multiselect(
-        "Categories",
-        category_options,
-        default=category_options,
-    )
+    filter_selections = {}
+    for label, column in filter_definitions:
+        if column not in sales_data.columns:
+            continue
 
-    focus_options = sorted(sales_data["focus"].dropna().unique())
-    selected_focus = st.sidebar.multiselect(
-        "Focus buckets",
-        focus_options,
-        default=focus_options,
-    )
-
-    status_options = sorted(sales_data["new_old"].dropna().unique())
-    selected_status = st.sidebar.multiselect(
-        "Assortment status",
-        status_options,
-        default=status_options,
-    )
+        options = sorted(sales_data[column].dropna().unique())
+        filter_selections[column] = st.sidebar.multiselect(label, options)
 
     top_n = st.sidebar.slider(
         "Top SKUs to show", min_value=5, max_value=25, value=10, step=1
@@ -230,12 +267,11 @@ def main() -> None:
             return pd.Series(True, index=series.index)
         return series.isin(choices)
 
-    filtered = sales_data[
-        _apply_filter(sales_data["channel"], selected_channels)
-        & _apply_filter(sales_data["category"], selected_categories)
-        & _apply_filter(sales_data["focus"], selected_focus)
-        & _apply_filter(sales_data["new_old"], selected_status)
-    ].copy()
+    filter_mask = pd.Series(True, index=sales_data.index)
+    for column, selected in filter_selections.items():
+        filter_mask &= _apply_filter(sales_data[column], selected)
+
+    filtered = sales_data[filter_mask].copy()
 
     if filtered.empty:
         st.warning("No records match the current filter selection.")
@@ -348,61 +384,75 @@ def main() -> None:
 
     st.divider()
 
-    sku_channel_options = selected_channels or channel_options
-    sku_channel = st.selectbox(
-        "Channel for SKU ranking",
-        sku_channel_options,
-        index=0,
-    )
+    sku_channel_options = sorted(filtered["channel"].dropna().unique())
+    if sku_channel_options:
+        sku_channel = st.selectbox(
+            "Channel for SKU ranking",
+            sku_channel_options,
+            index=0,
+        )
 
-    sku_subset = filtered[filtered["channel"] == sku_channel]
+        sku_subset = filtered[filtered["channel"] == sku_channel]
 
-    if sku_subset.empty:
-        st.info("No SKU data available for the selected channel.")
+        if sku_subset.empty:
+            st.info("No SKU data available for the selected channel.")
+        else:
+            top_skus = (
+                sku_subset.sort_values("achieved_revenue", ascending=False)
+                .loc[
+                    :,
+                    [
+                        "sku",
+                        "plain_sku",
+                        "sku_g",
+                        "category",
+                        "focus",
+                        "total_target_sales",
+                        "achieved_revenue",
+                        "sales_quantity",
+                        "ad_spend",
+                        "achievement_ratio",
+                    ],
+                ]
+                .head(top_n)
+            )
+
+            st.subheader(f"Top {len(top_skus)} SKUs by achieved revenue")
+            st.bar_chart(
+                top_skus.set_index("sku")["achieved_revenue"],
+            )
+            st.dataframe(
+                top_skus.rename(
+                    columns={
+                        "plain_sku": "Plain SKU",
+                        "sku_g": "SKU (G)",
+                        "total_target_sales": "Target",
+                        "achieved_revenue": "Achieved",
+                        "sales_quantity": "Units",
+                        "ad_spend": "Ad spend",
+                        "achievement_ratio": "% to target",
+                    }
+                ),
+                use_container_width=True,
+            )
     else:
-        top_skus = (
-            sku_subset.sort_values("achieved_revenue", ascending=False)
-            .loc[
-                :,
-                [
-                    "sku",
-                    "category",
-                    "focus",
-                    "total_target_sales",
-                    "achieved_revenue",
-                    "sales_quantity",
-                    "ad_spend",
-                    "achievement_ratio",
-                ],
-            ]
-            .head(top_n)
-        )
-
-        st.subheader(f"Top {len(top_skus)} SKUs by achieved revenue")
-        st.bar_chart(
-            top_skus.set_index("sku")["achieved_revenue"],
-        )
-        st.dataframe(
-            top_skus.rename(
-                columns={
-                    "total_target_sales": "Target",
-                    "achieved_revenue": "Achieved",
-                    "sales_quantity": "Units",
-                    "ad_spend": "Ad spend",
-                    "achievement_ratio": "% to target",
-                }
-            ),
-            use_container_width=True,
-        )
+        st.info("No channels available after applying the current filters.")
 
     with st.expander("View filtered records"):
         display_columns = [
             "channel",
+            "platform",
+            "listing_owner",
+            "filter_store",
+            "dc",
             "dc_list",
             "category",
             "sku",
+            "plain_sku",
+            "sku_g",
             "focus",
             "new_old",
+            "checkout",
             "total_target_sales",
             "achieved_revenue",
             "sales_quantity",
