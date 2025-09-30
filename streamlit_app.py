@@ -74,20 +74,41 @@ def load_raw_workbook() -> pd.DataFrame:
     valid_columns = ~original_second_level.isna()
     raw = raw.loc[:, valid_columns]
 
+    general_columns = set(GENERAL_RENAME.keys()) | {"NEW/OLD"}
+
     first_level_labels = []
     current_section = "General"
-    for label in raw.columns.get_level_values(0):
-        if isinstance(label, str):
-            trimmed = label.strip()
-        else:
-            trimmed = label
+    level_zero = raw.columns.get_level_values(0)
+    level_one = raw.columns.get_level_values(1)
 
-        if pd.isna(trimmed) or trimmed == "":
+    for top_label, bottom_label in zip(level_zero, level_one):
+        if isinstance(bottom_label, str):
+            bottom_trimmed = bottom_label.strip()
+        else:
+            bottom_trimmed = bottom_label
+
+        if isinstance(top_label, str):
+            top_trimmed = top_label.strip()
+        else:
+            top_trimmed = top_label
+
+        if (
+            isinstance(bottom_trimmed, str)
+            and bottom_trimmed in general_columns
+        ):
+            first_level_labels.append("General")
+            continue
+
+        if (
+            pd.isna(top_trimmed)
+            or top_trimmed == ""
+            or (isinstance(top_trimmed, str) and top_trimmed.lower().startswith("unnamed"))
+        ):
             first_level_labels.append(current_section)
-        elif trimmed == "#N/A":
+        elif top_trimmed == "#N/A":
             first_level_labels.append("General")
         else:
-            current_section = trimmed
+            current_section = top_trimmed
             first_level_labels.append(current_section)
 
     raw.columns = pd.MultiIndex.from_arrays(
