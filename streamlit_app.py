@@ -12,6 +12,14 @@ st.set_page_config(
 
 DATA_PATH = Path(__file__).parent / "data/GP 2025 with MAIN.xlsx"
 
+
+class WorkbookDependencyError(RuntimeError):
+    """Raised when reading the Excel workbook requires a missing dependency."""
+
+
+class WorkbookNotFoundError(RuntimeError):
+    """Raised when the expected Excel workbook cannot be located."""
+
 CHANNEL_LABELS = {
     "AMZN": "Amazon",
     "EBAY/Walmart": "eBay / Walmart",
@@ -51,7 +59,16 @@ NUMERIC_COLUMNS = list(CHANNEL_RENAME.values())
 def load_raw_workbook() -> pd.DataFrame:
     """Read the Excel workbook and normalise the header structure."""
 
-    raw = pd.read_excel(DATA_PATH, sheet_name="MAIN", header=[2, 3])
+    try:
+        raw = pd.read_excel(DATA_PATH, sheet_name="MAIN", header=[2, 3])
+    except FileNotFoundError as exc:
+        raise WorkbookNotFoundError(
+            f"Workbook not found at '{DATA_PATH}'."
+        ) from exc
+    except ImportError as exc:  # Missing optional dependency such as openpyxl
+        raise WorkbookDependencyError(
+            "Reading the GP 2025 workbook requires the optional 'openpyxl' package."
+        ) from exc
 
     original_second_level = raw.columns.get_level_values(1)
     valid_columns = ~original_second_level.isna()
@@ -126,237 +143,256 @@ def load_sales_data() -> pd.DataFrame:
     return tidy
 
 
-sales_data = load_sales_data()
-
-st.title("GP 2025 Sales Performance Dashboard")
-st.caption(
-    "Explore the GP 2025 workbook and compare channel performance against targets. "
-    "Monetary values are shown using the original workbook units."
-)
-
-if sales_data.empty:
-    st.error("No sales data found in the workbook.")
-    st.stop()
-
-
-st.sidebar.header("Filters")
-
-channel_options = list(CHANNEL_LABELS.values())
-selected_channels = st.sidebar.multiselect(
-    "Channels",
-    channel_options,
-    default=channel_options,
-)
-
-category_options = sorted(sales_data["category"].dropna().unique())
-selected_categories = st.sidebar.multiselect(
-    "Categories",
-    category_options,
-    default=category_options,
-)
-
-focus_options = sorted(sales_data["focus"].dropna().unique())
-selected_focus = st.sidebar.multiselect(
-    "Focus buckets",
-    focus_options,
-    default=focus_options,
-)
-
-status_options = sorted(sales_data["new_old"].dropna().unique())
-selected_status = st.sidebar.multiselect(
-    "Assortment status",
-    status_options,
-    default=status_options,
-)
-
-top_n = st.sidebar.slider("Top SKUs to show", min_value=5, max_value=25, value=10, step=1)
-
-
-def _apply_filter(series: pd.Series, choices: list[str]) -> pd.Series:
-    if not choices:
-        return pd.Series(True, index=series.index)
-    return series.isin(choices)
-
-
-filtered = sales_data[
-    _apply_filter(sales_data["channel"], selected_channels)
-    & _apply_filter(sales_data["category"], selected_categories)
-    & _apply_filter(sales_data["focus"], selected_focus)
-    & _apply_filter(sales_data["new_old"], selected_status)
-].copy()
-
-if filtered.empty:
-    st.warning("No records match the current filter selection.")
-    st.stop()
-
-
-total_achieved = filtered["achieved_revenue"].sum(min_count=1)
-total_target = filtered["total_target_sales"].sum(min_count=1)
-total_quantity = filtered["sales_quantity"].sum(min_count=1)
-total_ad_spend = filtered["ad_spend"].sum(min_count=1)
-
-if pd.isna(total_achieved):
-    total_achieved = 0.0
-if pd.isna(total_target):
-    total_target = 0.0
-if pd.isna(total_quantity):
-    total_quantity = 0.0
-if pd.isna(total_ad_spend):
-    total_ad_spend = 0.0
-
-revenue_weights = filtered["achieved_revenue"].fillna(0)
-margin_values = filtered["ip_margin"].fillna(0)
-weighted_margin = (
-    (revenue_weights * margin_values).sum() / revenue_weights.sum()
-    if revenue_weights.sum() > 0
-    else pd.NA
-)
-
-delta_pct = (total_achieved / total_target - 1) * 100 if total_target else None
-
-st.markdown(
-    f"**{len(filtered):,}** channel records after filtering"
-)
-
-metric_cols = st.columns(4)
-
-metric_cols[0].metric(
-    "Achieved revenue",
-    f"{total_achieved:,.0f}",
-    delta=f"{delta_pct:.1f}%" if delta_pct is not None else "n/a",
-)
-metric_cols[1].metric("Target sales", f"{total_target:,.0f}")
-metric_cols[2].metric("Units sold", f"{total_quantity:,.0f}")
-metric_cols[3].metric(
-    "Weighted IP margin",
-    f"{weighted_margin:.1%}" if pd.notna(weighted_margin) else "n/a",
-)
-
-st.divider()
-
-channel_summary = (
-    filtered.groupby("channel")[
-        ["total_target_sales", "achieved_revenue", "sales_quantity", "ad_spend"]
-    ]
-    .sum()
-    .sort_values("achieved_revenue", ascending=False)
-)
-
-st.subheader("Channel performance")
-st.bar_chart(channel_summary[["total_target_sales", "achieved_revenue"]])
-st.dataframe(
-    channel_summary.rename(
-        columns={
-            "total_target_sales": "Total target",
-            "achieved_revenue": "Achieved revenue",
-            "sales_quantity": "Units sold",
-            "ad_spend": "Advertising spend",
-        }
-    ),
-    use_container_width=True,
-)
-
-st.divider()
-
-metric_options = {
-    "Achieved revenue": "achieved_revenue",
-    "Units sold": "sales_quantity",
-    "Advertising spend": "ad_spend",
-    "Target sales": "total_target_sales",
-}
-
-selected_metric_label = st.selectbox(
-    "Metric for category breakdown",
-    list(metric_options.keys()),
-    index=0,
-)
-selected_metric = metric_options[selected_metric_label]
-
-category_summary = (
-    filtered.groupby("category")[selected_metric]
-    .sum(min_count=1)
-    .sort_values(ascending=False)
-    .head(12)
-)
-
-focus_summary = (
-    filtered.groupby("focus")["achieved_revenue"]
-    .sum(min_count=1)
-    .sort_values(ascending=False)
-    .head(12)
-)
-
-col_a, col_b = st.columns(2)
-
-with col_a:
-    st.subheader("Top categories")
-    st.bar_chart(category_summary)
-
-with col_b:
-    st.subheader("Focus mix (by achieved revenue)")
-    st.bar_chart(focus_summary)
-
-st.divider()
-
-sku_channel_options = selected_channels or channel_options
-sku_channel = st.selectbox(
-    "Channel for SKU ranking",
-    sku_channel_options,
-    index=0,
-)
-
-sku_subset = filtered[filtered["channel"] == sku_channel]
-
-if sku_subset.empty:
-    st.info("No SKU data available for the selected channel.")
-else:
-    top_skus = (
-        sku_subset.sort_values("achieved_revenue", ascending=False)
-        .loc[:, [
-            "sku",
-            "category",
-            "focus",
-            "total_target_sales",
-            "achieved_revenue",
-            "sales_quantity",
-            "ad_spend",
-            "achievement_ratio",
-        ]]
-        .head(top_n)
+def main() -> None:
+    st.title("GP 2025 Sales Performance Dashboard")
+    st.caption(
+        "Explore the GP 2025 workbook and compare channel performance against targets. "
+        "Monetary values are shown using the original workbook units."
     )
 
-    st.subheader(f"Top {len(top_skus)} SKUs by achieved revenue")
-    st.bar_chart(
-        top_skus.set_index("sku")["achieved_revenue"],
+    try:
+        sales_data = load_sales_data()
+    except WorkbookDependencyError:
+        st.error(
+            "Unable to read the workbook because the optional dependency `openpyxl` is "
+            "missing. Install it with `pip install openpyxl` or `pip install -r "
+            "requirements.txt` and rerun the app."
+        )
+        st.stop()
+        return
+    except WorkbookNotFoundError as exc:
+        st.error(str(exc))
+        st.stop()
+        return
+
+    if sales_data.empty:
+        st.error("No sales data found in the workbook.")
+        st.stop()
+        return
+
+    st.sidebar.header("Filters")
+
+    channel_options = list(CHANNEL_LABELS.values())
+    selected_channels = st.sidebar.multiselect(
+        "Channels",
+        channel_options,
+        default=channel_options,
     )
+
+    category_options = sorted(sales_data["category"].dropna().unique())
+    selected_categories = st.sidebar.multiselect(
+        "Categories",
+        category_options,
+        default=category_options,
+    )
+
+    focus_options = sorted(sales_data["focus"].dropna().unique())
+    selected_focus = st.sidebar.multiselect(
+        "Focus buckets",
+        focus_options,
+        default=focus_options,
+    )
+
+    status_options = sorted(sales_data["new_old"].dropna().unique())
+    selected_status = st.sidebar.multiselect(
+        "Assortment status",
+        status_options,
+        default=status_options,
+    )
+
+    top_n = st.sidebar.slider(
+        "Top SKUs to show", min_value=5, max_value=25, value=10, step=1
+    )
+
+    def _apply_filter(series: pd.Series, choices: list[str]) -> pd.Series:
+        if not choices:
+            return pd.Series(True, index=series.index)
+        return series.isin(choices)
+
+    filtered = sales_data[
+        _apply_filter(sales_data["channel"], selected_channels)
+        & _apply_filter(sales_data["category"], selected_categories)
+        & _apply_filter(sales_data["focus"], selected_focus)
+        & _apply_filter(sales_data["new_old"], selected_status)
+    ].copy()
+
+    if filtered.empty:
+        st.warning("No records match the current filter selection.")
+        st.stop()
+        return
+
+    total_achieved = filtered["achieved_revenue"].sum(min_count=1)
+    total_target = filtered["total_target_sales"].sum(min_count=1)
+    total_quantity = filtered["sales_quantity"].sum(min_count=1)
+    total_ad_spend = filtered["ad_spend"].sum(min_count=1)
+
+    if pd.isna(total_achieved):
+        total_achieved = 0.0
+    if pd.isna(total_target):
+        total_target = 0.0
+    if pd.isna(total_quantity):
+        total_quantity = 0.0
+    if pd.isna(total_ad_spend):
+        total_ad_spend = 0.0
+
+    revenue_weights = filtered["achieved_revenue"].fillna(0)
+    margin_values = filtered["ip_margin"].fillna(0)
+    weighted_margin = (
+        (revenue_weights * margin_values).sum() / revenue_weights.sum()
+        if revenue_weights.sum() > 0
+        else pd.NA
+    )
+
+    delta_pct = (total_achieved / total_target - 1) * 100 if total_target else None
+
+    st.markdown(f"**{len(filtered):,}** channel records after filtering")
+
+    metric_cols = st.columns(4)
+
+    metric_cols[0].metric(
+        "Achieved revenue",
+        f"{total_achieved:,.0f}",
+        delta=f"{delta_pct:.1f}%" if delta_pct is not None else "n/a",
+    )
+    metric_cols[1].metric("Target sales", f"{total_target:,.0f}")
+    metric_cols[2].metric("Units sold", f"{total_quantity:,.0f}")
+    metric_cols[3].metric(
+        "Weighted IP margin",
+        f"{weighted_margin:.1%}" if pd.notna(weighted_margin) else "n/a",
+    )
+
+    st.divider()
+
+    channel_summary = (
+        filtered.groupby("channel")[
+            ["total_target_sales", "achieved_revenue", "sales_quantity", "ad_spend"]
+        ]
+        .sum()
+        .sort_values("achieved_revenue", ascending=False)
+    )
+
+    st.subheader("Channel performance")
+    st.bar_chart(channel_summary[["total_target_sales", "achieved_revenue"]])
     st.dataframe(
-        top_skus.rename(
+        channel_summary.rename(
             columns={
-                "total_target_sales": "Target",
-                "achieved_revenue": "Achieved",
-                "sales_quantity": "Units",
-                "ad_spend": "Ad spend",
-                "achievement_ratio": "% to target",
+                "total_target_sales": "Total target",
+                "achieved_revenue": "Achieved revenue",
+                "sales_quantity": "Units sold",
+                "ad_spend": "Advertising spend",
             }
         ),
         use_container_width=True,
     )
 
-with st.expander("View filtered records"):
-    display_columns = [
-        "channel",
-        "dc_list",
-        "category",
-        "sku",
-        "focus",
-        "new_old",
-        "total_target_sales",
-        "achieved_revenue",
-        "sales_quantity",
-        "ad_spend",
-        "ip_margin",
-    ]
-    st.dataframe(
-        filtered[display_columns].sort_values("achieved_revenue", ascending=False),
-        use_container_width=True,
+    st.divider()
+
+    metric_options = {
+        "Achieved revenue": "achieved_revenue",
+        "Units sold": "sales_quantity",
+        "Advertising spend": "ad_spend",
+        "Target sales": "total_target_sales",
+    }
+
+    selected_metric_label = st.selectbox(
+        "Metric for category breakdown",
+        list(metric_options.keys()),
+        index=0,
     )
+    selected_metric = metric_options[selected_metric_label]
+
+    category_summary = (
+        filtered.groupby("category")[selected_metric]
+        .sum(min_count=1)
+        .sort_values(ascending=False)
+        .head(12)
+    )
+
+    focus_summary = (
+        filtered.groupby("focus")["achieved_revenue"]
+        .sum(min_count=1)
+        .sort_values(ascending=False)
+        .head(12)
+    )
+
+    col_a, col_b = st.columns(2)
+
+    with col_a:
+        st.subheader("Top categories")
+        st.bar_chart(category_summary)
+
+    with col_b:
+        st.subheader("Focus mix (by achieved revenue)")
+        st.bar_chart(focus_summary)
+
+    st.divider()
+
+    sku_channel_options = selected_channels or channel_options
+    sku_channel = st.selectbox(
+        "Channel for SKU ranking",
+        sku_channel_options,
+        index=0,
+    )
+
+    sku_subset = filtered[filtered["channel"] == sku_channel]
+
+    if sku_subset.empty:
+        st.info("No SKU data available for the selected channel.")
+    else:
+        top_skus = (
+            sku_subset.sort_values("achieved_revenue", ascending=False)
+            .loc[
+                :,
+                [
+                    "sku",
+                    "category",
+                    "focus",
+                    "total_target_sales",
+                    "achieved_revenue",
+                    "sales_quantity",
+                    "ad_spend",
+                    "achievement_ratio",
+                ],
+            ]
+            .head(top_n)
+        )
+
+        st.subheader(f"Top {len(top_skus)} SKUs by achieved revenue")
+        st.bar_chart(
+            top_skus.set_index("sku")["achieved_revenue"],
+        )
+        st.dataframe(
+            top_skus.rename(
+                columns={
+                    "total_target_sales": "Target",
+                    "achieved_revenue": "Achieved",
+                    "sales_quantity": "Units",
+                    "ad_spend": "Ad spend",
+                    "achievement_ratio": "% to target",
+                }
+            ),
+            use_container_width=True,
+        )
+
+    with st.expander("View filtered records"):
+        display_columns = [
+            "channel",
+            "dc_list",
+            "category",
+            "sku",
+            "focus",
+            "new_old",
+            "total_target_sales",
+            "achieved_revenue",
+            "sales_quantity",
+            "ad_spend",
+            "ip_margin",
+        ]
+        st.dataframe(
+            filtered[display_columns].sort_values("achieved_revenue", ascending=False),
+            use_container_width=True,
+        )
+
+
+if __name__ == "__main__":
+    main()
