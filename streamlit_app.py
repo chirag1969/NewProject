@@ -88,7 +88,7 @@ CHANNEL_RENAME = {
 }
 
 NUMERIC_COLUMNS = list(CHANNEL_RENAME.values())
-DEFAULT_TOP_N = 10
+DEFAULT_TOP_N = 15
 
 
 def _nice_upper_bound(max_value: float) -> float:
@@ -537,7 +537,7 @@ def _render_dashboard(sales_data: pd.DataFrame, order_history: pd.DataFrame) -> 
                 y_axis = alt.Y(
                     "total_revenue:Q",
                     title="Amount",
-                    axis=alt.Axis(labelAngle=0),
+                    axis=alt.Axis(labelAngle=0, format=",.2f"),
                     scale=alt.Scale(domain=[0, _nice_upper_bound(performance["total_revenue"].max())]),
                 )
 
@@ -558,15 +558,15 @@ def _render_dashboard(sales_data: pd.DataFrame, order_history: pd.DataFrame) -> 
                 revenue_bars = base.mark_bar(color="#4C78A8").encode(y=y_axis)
 
                 revenue_labels = revenue_bars.mark_text(
-                    align="center", baseline="bottom", dy=-4, color="#4C78A8"
+                    align="center", baseline="bottom", dy=-6, color="#4C78A8"
                 ).encode(text=alt.Text("total_revenue:Q", format=",.2f"))
 
                 net_line = base.mark_line(point=True, color="#F58518").encode(
-                    y=alt.Y("net:Q", axis=alt.Axis(title=None))
+                    y=alt.Y("net:Q", axis=alt.Axis(title=None, format=",.2f"))
                 )
 
                 net_labels = net_line.mark_text(
-                    align="center", baseline="bottom", dy=-12, color="#F58518"
+                    align="center", baseline="top", dy=8, color="#F58518"
                 ).encode(text=alt.Text("net:Q", format=",.2f"))
 
                 combined_chart = (
