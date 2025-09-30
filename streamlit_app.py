@@ -1,6 +1,9 @@
+from pathlib import Path
+
+import altair as alt
+import math
 import pandas as pd
 import streamlit as st
-from pathlib import Path
 
 
 st.set_page_config(
@@ -60,6 +63,23 @@ CHANNEL_RENAME = {
 }
 
 NUMERIC_COLUMNS = list(CHANNEL_RENAME.values())
+DEFAULT_TOP_N = 10
+
+
+def _nice_upper_bound(max_value: float) -> float:
+    """Return a pleasant upper bound for chart axes based on the maximum value."""
+
+    if pd.isna(max_value) or max_value <= 0:
+        return 1.0
+
+    padded = max_value * 1.05
+    magnitude = 10 ** max(int(math.log10(padded)), 0)
+    for factor in (1, 2, 5, 10):
+        candidate = factor * magnitude
+        if candidate >= padded:
+            return candidate
+
+    return padded
 
 
 @st.cache_data
@@ -237,8 +257,6 @@ def main() -> None:
         st.stop()
         return
 
-    st.sidebar.header("Filters")
-
     filter_definitions = [
         ("Listing owner", "listing_owner"),
         ("Platform", "platform"),
@@ -250,17 +268,69 @@ def main() -> None:
         ("Filter store", "filter_store"),
     ]
 
-    filter_selections = {}
-    for label, column in filter_definitions:
-        if column not in sales_data.columns:
-            continue
+    available_filters = [
+        (label, column)
+        for label, column in filter_definitions
+        if column in sales_data.columns
+    ]
 
-        options = sorted(sales_data[column].dropna().unique())
-        filter_selections[column] = st.sidebar.multiselect(label, options)
+    if "filters" not in st.session_state:
+        st.session_state.filters = {column: [] for _, column in available_filters}
+    else:
+        for _, column in available_filters:
+            st.session_state.filters.setdefault(column, [])
 
-    top_n = st.sidebar.slider(
-        "Top SKUs to show", min_value=5, max_value=25, value=10, step=1
-    )
+    if "top_n" not in st.session_state:
+        st.session_state.top_n = DEFAULT_TOP_N
+
+    if "filters_open" not in st.session_state:
+        st.session_state.filters_open = False
+
+    controls = st.columns([1, 3])
+    with controls[0]:
+        if st.button("Filters", type="primary", use_container_width=True):
+            st.session_state.filters_open = True
+
+    record_counter = controls[1].empty()
+
+    if st.session_state.filters_open:
+        with st.modal("Filter data"):
+            new_selections: dict[str, list[str]] = {}
+            for label, column in available_filters:
+                options = sorted(sales_data[column].dropna().unique())
+                new_selections[column] = st.multiselect(
+                    label,
+                    options,
+                    default=st.session_state.filters.get(column, []),
+                )
+
+            new_top_n = st.slider(
+                "Top SKUs to show", min_value=5, max_value=25, value=st.session_state.top_n, step=1
+            )
+
+            action_cols = st.columns(3)
+            if action_cols[0].button("Apply", use_container_width=True):
+                st.session_state.filters.update(new_selections)
+                st.session_state.top_n = new_top_n
+                st.session_state.filters_open = False
+                st.experimental_rerun()
+
+            if action_cols[1].button("Reset", use_container_width=True):
+                st.session_state.filters = {column: [] for _, column in available_filters}
+                st.session_state.top_n = DEFAULT_TOP_N
+                st.session_state.filters_open = False
+                st.experimental_rerun()
+
+            if action_cols[2].button("Close", use_container_width=True):
+                st.session_state.filters_open = False
+                st.experimental_rerun()
+
+    filter_selections = {
+        column: st.session_state.filters.get(column, [])
+        for _, column in available_filters
+    }
+
+    top_n = st.session_state.top_n
 
     def _apply_filter(series: pd.Series, choices: list[str]) -> pd.Series:
         if not choices:
@@ -302,23 +372,33 @@ def main() -> None:
 
     delta_pct = (total_achieved / total_target - 1) * 100 if total_target else None
 
-    st.markdown(f"**{len(filtered):,}** channel records after filtering")
+    record_counter.markdown(
+        f"**{len(filtered):,}** channel records after filtering"
+    )
 
     metric_cols = st.columns(4)
+    metrics = [
+        (
+            "Achieved revenue",
+            f"{total_achieved:,.0f}",
+            f"{delta_pct:.1f}%" if delta_pct is not None else "n/a",
+        ),
+        ("Target sales", f"{total_target:,.0f}", None),
+        ("Units sold", f"{total_quantity:,.0f}", None),
+        (
+            "Weighted IP margin",
+            f"{weighted_margin:.1%}" if pd.notna(weighted_margin) else "n/a",
+            None,
+        ),
+    ]
 
-    metric_cols[0].metric(
-        "Achieved revenue",
-        f"{total_achieved:,.0f}",
-        delta=f"{delta_pct:.1f}%" if delta_pct is not None else "n/a",
-    )
-    metric_cols[1].metric("Target sales", f"{total_target:,.0f}")
-    metric_cols[2].metric("Units sold", f"{total_quantity:,.0f}")
-    metric_cols[3].metric(
-        "Weighted IP margin",
-        f"{weighted_margin:.1%}" if pd.notna(weighted_margin) else "n/a",
-    )
-
-    st.divider()
+    for column, (label, value, delta) in zip(metric_cols, metrics):
+        with column:
+            with st.container(border=True):
+                if delta is None:
+                    st.metric(label, value)
+                else:
+                    st.metric(label, value, delta=delta)
 
     channel_summary = (
         filtered.groupby("channel")[
@@ -328,21 +408,49 @@ def main() -> None:
         .sort_values("achieved_revenue", ascending=False)
     )
 
-    st.subheader("Channel performance")
-    st.bar_chart(channel_summary[["total_target_sales", "achieved_revenue"]])
-    st.dataframe(
-        channel_summary.rename(
-            columns={
-                "total_target_sales": "Total target",
-                "achieved_revenue": "Achieved revenue",
-                "sales_quantity": "Units sold",
-                "ad_spend": "Advertising spend",
-            }
-        ),
-        use_container_width=True,
+    channel_chart_data = (
+        channel_summary[["total_target_sales", "achieved_revenue"]]
+        .reset_index()
+        .melt(id_vars="channel", var_name="Metric", value_name="value")
     )
 
-    st.divider()
+    channel_upper_bound = _nice_upper_bound(channel_chart_data["value"].max())
+
+    channel_chart = (
+        alt.Chart(channel_chart_data)
+        .mark_bar()
+        .encode(
+            x=alt.X("channel:N", title="Channel", axis=alt.Axis(labelAngle=-20)),
+            y=alt.Y(
+                "value:Q",
+                title="Amount",
+                scale=alt.Scale(domain=[0, channel_upper_bound]),
+            ),
+            color=alt.Color("Metric:N", title="Metric", legend=alt.Legend(orient="top")),
+            xOffset="Metric:N",
+            tooltip=[
+                alt.Tooltip("channel:N", title="Channel"),
+                alt.Tooltip("Metric:N", title="Metric"),
+                alt.Tooltip("value:Q", title="Value", format=",.0f"),
+            ],
+        )
+        .properties(height=320)
+    )
+
+    with st.container(border=True):
+        st.subheader("Channel performance")
+        st.altair_chart(channel_chart, use_container_width=True)
+        st.dataframe(
+            channel_summary.rename(
+                columns={
+                    "total_target_sales": "Total target",
+                    "achieved_revenue": "Achieved revenue",
+                    "sales_quantity": "Units sold",
+                    "ad_spend": "Advertising spend",
+                }
+            ),
+            use_container_width=True,
+        )
 
     metric_options = {
         "Achieved revenue": "achieved_revenue",
@@ -355,6 +463,7 @@ def main() -> None:
         "Metric for category breakdown",
         list(metric_options.keys()),
         index=0,
+        key="category_metric",
     )
     selected_metric = metric_options[selected_metric_label]
 
@@ -372,71 +481,151 @@ def main() -> None:
         .head(12)
     )
 
+    category_chart_data = (
+        category_summary.reset_index().rename(
+            columns={"category": "Category", selected_metric: "value"}
+        )
+    )
+    focus_chart_data = (
+        focus_summary.reset_index().rename(
+            columns={"focus": "Focus", "achieved_revenue": "value"}
+        )
+    )
+
     col_a, col_b = st.columns(2)
 
     with col_a:
-        st.subheader("Top categories")
-        st.bar_chart(category_summary)
+        with st.container(border=True):
+            st.subheader("Top categories")
+            if category_chart_data.empty:
+                st.info("No category data available for the current selection.")
+            else:
+                category_upper = _nice_upper_bound(category_chart_data["value"].max())
+                category_chart = (
+                    alt.Chart(category_chart_data)
+                    .mark_bar()
+                    .encode(
+                        x=alt.X(
+                            "value:Q",
+                            title=selected_metric_label,
+                            scale=alt.Scale(domain=[0, category_upper]),
+                        ),
+                        y=alt.Y("Category:N", sort="-x"),
+                        tooltip=[
+                            alt.Tooltip("Category:N", title="Category"),
+                            alt.Tooltip("value:Q", title=selected_metric_label, format=",.0f"),
+                        ],
+                    )
+                    .properties(height=360)
+                )
+                st.altair_chart(category_chart, use_container_width=True)
 
     with col_b:
-        st.subheader("Focus mix (by achieved revenue)")
-        st.bar_chart(focus_summary)
+        with st.container(border=True):
+            st.subheader("Focus mix (by achieved revenue)")
+            if focus_chart_data.empty:
+                st.info("No focus data available for the current selection.")
+            else:
+                focus_upper = _nice_upper_bound(focus_chart_data["value"].max())
+                focus_chart = (
+                    alt.Chart(focus_chart_data)
+                    .mark_bar()
+                    .encode(
+                        x=alt.X(
+                            "value:Q",
+                            title="Achieved revenue",
+                            scale=alt.Scale(domain=[0, focus_upper]),
+                        ),
+                        y=alt.Y("Focus:N", sort="-x"),
+                        tooltip=[
+                            alt.Tooltip("Focus:N", title="Focus"),
+                            alt.Tooltip("value:Q", title="Achieved revenue", format=",.0f"),
+                        ],
+                    )
+                    .properties(height=360)
+                )
+                st.altair_chart(focus_chart, use_container_width=True)
 
-    st.divider()
+    with st.container(border=True):
+        st.subheader("Top SKU performance")
+        sku_channel_options = sorted(filtered["channel"].dropna().unique())
 
-    sku_channel_options = sorted(filtered["channel"].dropna().unique())
-    if sku_channel_options:
-        sku_channel = st.selectbox(
-            "Channel for SKU ranking",
-            sku_channel_options,
-            index=0,
-        )
-
-        sku_subset = filtered[filtered["channel"] == sku_channel]
-
-        if sku_subset.empty:
-            st.info("No SKU data available for the selected channel.")
+        if not sku_channel_options:
+            st.info("No channels available after applying the current filters.")
         else:
-            top_skus = (
-                sku_subset.sort_values("achieved_revenue", ascending=False)
-                .loc[
-                    :,
-                    [
-                        "sku",
-                        "plain_sku",
-                        "sku_g",
-                        "category",
-                        "focus",
-                        "total_target_sales",
-                        "achieved_revenue",
-                        "sales_quantity",
-                        "ad_spend",
-                        "achievement_ratio",
-                    ],
-                ]
-                .head(top_n)
+            sku_channel = st.selectbox(
+                "Channel for SKU ranking",
+                sku_channel_options,
+                index=0,
+                key="sku_channel",
             )
 
-            st.subheader(f"Top {len(top_skus)} SKUs by achieved revenue")
-            st.bar_chart(
-                top_skus.set_index("sku")["achieved_revenue"],
-            )
-            st.dataframe(
-                top_skus.rename(
-                    columns={
-                        "plain_sku": "Plain SKU",
-                        "sku_g": "SKU (G)",
-                        "total_target_sales": "Target",
-                        "achieved_revenue": "Achieved",
-                        "sales_quantity": "Units",
-                        "ad_spend": "Ad spend",
-                        "achievement_ratio": "% to target",
-                    }
-                ),
-                use_container_width=True,
-            )
-    else:
-        st.info("No channels available after applying the current filters.")
+            sku_subset = filtered[filtered["channel"] == sku_channel]
+
+            if sku_subset.empty:
+                st.info("No SKU data available for the selected channel.")
+            else:
+                top_skus = (
+                    sku_subset.sort_values("achieved_revenue", ascending=False)
+                    .loc[
+                        :,
+                        [
+                            "sku",
+                            "plain_sku",
+                            "sku_g",
+                            "category",
+                            "focus",
+                            "total_target_sales",
+                            "achieved_revenue",
+                            "sales_quantity",
+                            "ad_spend",
+                            "achievement_ratio",
+                        ],
+                    ]
+                    .head(top_n)
+                )
+
+                if top_skus.empty:
+                    st.info("No SKU data available for the selected channel.")
+                else:
+                    top_sku_chart_data = top_skus[["sku", "achieved_revenue"]].rename(
+                        columns={"sku": "SKU", "achieved_revenue": "Achieved"}
+                    )
+                    sku_upper = _nice_upper_bound(top_sku_chart_data["Achieved"].max())
+                    sku_chart = (
+                        alt.Chart(top_sku_chart_data)
+                        .mark_bar()
+                        .encode(
+                            x=alt.X(
+                                "Achieved:Q",
+                                title="Achieved revenue",
+                                scale=alt.Scale(domain=[0, sku_upper]),
+                            ),
+                            y=alt.Y("SKU:N", sort="-x"),
+                            tooltip=[
+                                alt.Tooltip("SKU:N", title="SKU"),
+                                alt.Tooltip("Achieved:Q", title="Achieved revenue", format=",.0f"),
+                            ],
+                        )
+                        .properties(height=400)
+                    )
+
+                    st.subheader(f"Top {len(top_skus)} SKUs by achieved revenue")
+                    st.altair_chart(sku_chart, use_container_width=True)
+                    st.dataframe(
+                        top_skus.rename(
+                            columns={
+                                "plain_sku": "Plain SKU",
+                                "sku_g": "SKU (G)",
+                                "total_target_sales": "Target",
+                                "achieved_revenue": "Achieved",
+                                "sales_quantity": "Units",
+                                "ad_spend": "Ad spend",
+                                "achievement_ratio": "% to target",
+                            }
+                        ),
+                        use_container_width=True,
+                    )
 
     with st.expander("View filtered records"):
         display_columns = [
