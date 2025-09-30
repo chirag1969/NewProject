@@ -20,6 +20,18 @@ st.markdown(
         #MainMenu {visibility: hidden;}
         header {visibility: hidden;}
         [data-testid="stToolbar"] {display: none !important;}
+        section.main > div.block-container {
+            padding-top: 1.25rem;
+        }
+        section.main h1:first-of-type {
+            margin-top: 0;
+        }
+        .filter-popover-body {
+            padding: 1.5rem 1.5rem 1.25rem;
+        }
+        .filter-popover-body h3 {
+            margin-top: 0;
+        }
     </style>
     """,
     unsafe_allow_html=True,
@@ -353,10 +365,15 @@ def _render_dashboard(sales_data: pd.DataFrame, order_history: pd.DataFrame) -> 
     else:
         filter_container = st.container(border=True)
 
+    apply_clicked = reset_clicked = close_clicked = False
+    new_selections: dict[str, list[str]] | None = None
+    new_top_n: int | None = None
+
     with filter_container:
+        st.markdown('<div class="filter-popover-body">', unsafe_allow_html=True)
         st.subheader("Filter data")
 
-        new_selections: dict[str, list[str]] = {}
+        new_selections = {}
         for label, column in available_filters:
             options = sorted(sales_data[column].dropna().unique())
             new_selections[column] = st.multiselect(
@@ -374,18 +391,30 @@ def _render_dashboard(sales_data: pd.DataFrame, order_history: pd.DataFrame) -> 
         )
 
         action_cols = st.columns(3)
-        if action_cols[0].button("Apply", use_container_width=True, key="apply_filters"):
-            st.session_state.filters.update(new_selections)
-            st.session_state.top_n = new_top_n
-            st.rerun()
+        apply_clicked = action_cols[0].button(
+            "Apply", use_container_width=True, key="apply_filters"
+        )
+        reset_clicked = action_cols[1].button(
+            "Reset", use_container_width=True, key="reset_filters"
+        )
+        close_clicked = action_cols[2].button(
+            "Close", use_container_width=True, key="close_filters"
+        )
 
-        if action_cols[1].button("Reset", use_container_width=True, key="reset_filters"):
-            st.session_state.filters = {column: [] for _, column in available_filters}
-            st.session_state.top_n = DEFAULT_TOP_N
-            st.rerun()
+        st.markdown("</div>", unsafe_allow_html=True)
 
-        if action_cols[2].button("Close", use_container_width=True, key="close_filters"):
-            st.rerun()
+    if apply_clicked and new_selections is not None and new_top_n is not None:
+        st.session_state.filters.update(new_selections)
+        st.session_state.top_n = new_top_n
+        st.rerun()
+
+    if reset_clicked:
+        st.session_state.filters = {column: [] for _, column in available_filters}
+        st.session_state.top_n = DEFAULT_TOP_N
+        st.rerun()
+
+    if close_clicked:
+        st.rerun()
 
     filter_selections = {
         column: st.session_state.filters.get(column, [])
@@ -438,11 +467,11 @@ def _render_dashboard(sales_data: pd.DataFrame, order_history: pd.DataFrame) -> 
     metrics = [
         (
             "Achieved revenue",
-            f"{total_achieved:,.2f}",
+            f"{total_achieved:,.0f}",
             f"{delta_pct:.2f}%" if delta_pct is not None else "n/a",
         ),
-        ("Target sales", f"{total_target:,.2f}", None),
-        ("Units sold", f"{total_quantity:,.2f}", None),
+        ("Target sales", f"{total_target:,.0f}", None),
+        ("Units sold", f"{total_quantity:,.0f}", None),
         (
             "Weighted IP margin",
             f"{weighted_margin:.2%}" if pd.notna(weighted_margin) else "n/a",
