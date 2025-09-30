@@ -21,7 +21,7 @@ st.markdown(
         header {visibility: hidden;}
         [data-testid="stToolbar"] {display: none !important;}
         section.main > div.block-container {
-            padding-top: 1.25rem;
+            padding-top: 0.5rem;
         }
         section.main h1:first-of-type {
             margin-top: 0;
@@ -374,13 +374,21 @@ def _render_dashboard(sales_data: pd.DataFrame, order_history: pd.DataFrame) -> 
         st.subheader("Filter data")
 
         new_selections = {}
-        for label, column in available_filters:
-            options = sorted(sales_data[column].dropna().unique())
-            new_selections[column] = st.multiselect(
-                label,
-                options,
-                default=st.session_state.filters.get(column, []),
-            )
+        columns_per_row = min(3, max(len(available_filters), 1))
+        filter_columns = st.columns(columns_per_row)
+
+        for idx, (label, column) in enumerate(available_filters):
+            target_column = filter_columns[idx % columns_per_row]
+            with target_column:
+                options = sorted(sales_data[column].dropna().unique())
+                new_selections[column] = st.multiselect(
+                    label,
+                    options,
+                    default=st.session_state.filters.get(column, []),
+                )
+
+            if (idx + 1) % columns_per_row == 0 and (idx + 1) < len(available_filters):
+                filter_columns = st.columns(columns_per_row)
 
         new_top_n = st.slider(
             "Top SKUs to show",
