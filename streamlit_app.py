@@ -3,13 +3,22 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Iterable
 
+import hashlib
+
 import pandas as pd
 import streamlit as st
 from pandas.api.types import is_datetime64_any_dtype
 
 st.set_page_config(page_title="Workbook Viewer", layout="wide")
 
-ACCESS_CODE = "1312"
+ACCESS_CODE_HASH = "712dca40936b39ce670dc803736fe3735cf99311030a928de039a36f77926230"
+
+
+def _access_code_matches(candidate: str) -> bool:
+    """Return ``True`` when the provided candidate matches the stored code."""
+
+    candidate_hash = hashlib.sha256(candidate.encode("utf-8")).hexdigest()
+    return candidate_hash == ACCESS_CODE_HASH
 
 
 def _require_access_code() -> None:
@@ -28,9 +37,9 @@ def _require_access_code() -> None:
         submitted = st.form_submit_button("Submit")
 
     if submitted:
-        if code == ACCESS_CODE:
+        if _access_code_matches(code):
             st.session_state.access_granted = True
-            st.experimental_rerun()
+            st.rerun()
         else:
             st.error("Incorrect access code. Please try again.")
 
