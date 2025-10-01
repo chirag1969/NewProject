@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Iterable
+from typing import Any, Iterable
 
 import pandas as pd
 import streamlit as st
+from pandas.api.types import is_datetime64_any_dtype
 
 st.set_page_config(page_title="Workbook Viewer", layout="wide")
 
@@ -90,12 +91,35 @@ with regular_tab:
             if column not in integer_columns
         ]
 
-        format_dict: dict[str, str] = {}
-        if integer_columns:
-            format_dict.update({column: "{:.0f}" for column in integer_columns})
-        if float_columns:
-            format_dict.update({column: "{:,.2f}" for column in float_columns})
+        date_columns = [
+            column
+            for column in regular_data.columns
+            if is_datetime64_any_dtype(regular_data[column])
+        ]
 
-        styled_regular_data = regular_data.style.format(format_dict, na_rep="")
+        for column in date_columns:
+            regular_data[column] = pd.to_datetime(regular_data[column], errors="coerce")
 
-        st.dataframe(styled_regular_data, use_container_width=True, height=650)
+        column_config: dict[str, Any] = {}
+
+        for column in integer_columns:
+            column_config[column] = st.column_config.NumberColumn(
+                column, format="%d", help="Integer values"
+            )
+
+        for column in float_columns:
+            column_config[column] = st.column_config.NumberColumn(
+                column, format="%.2f", help="Numeric values"
+            )
+
+        for column in date_columns:
+            column_config[column] = st.column_config.DatetimeColumn(
+                column, format="DD-MM-YYYY", help="Date values"
+            )
+
+        st.dataframe(
+            regular_data,
+            use_container_width=True,
+            height=650,
+            column_config=column_config,
+        )
