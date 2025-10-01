@@ -58,17 +58,19 @@ st.markdown(
     
     /* Remove padding and margins from main container */
     .main .block-container {
-        padding-top: 0rem;
-        padding-bottom: 0rem;
+        padding-top: 0rem !important;
+        padding-bottom: 0rem !important;
         padding-left: 1rem;
         padding-right: 1rem;
         max-width: 100%;
+        margin-top: -2rem !important;
     }
     
     /* Remove padding from tabs container */
     .stTabs [data-baseweb="tab-list"] {
         gap: 0px;
         padding: 0 0 0 0;
+        margin-top: 0 !important;
     }
     
     /* Style tab content to remove extra space */
@@ -85,6 +87,16 @@ st.markdown(
     .stMarkdown {
         margin-top: 0;
         margin-bottom: 0;
+    }
+    
+    /* Remove top margin from the app */
+    .element-container {
+        margin-top: 0 !important;
+    }
+    
+    /* Remove top margin from the first element */
+    div[data-testid="stVerticalBlock"] > div:first-child {
+        margin-top: 0 !important;
     }
     
     /* Optimize data table styling */
@@ -108,6 +120,16 @@ st.markdown(
     .streamlit-container {
         height: 100vh;
         overflow: hidden;
+    }
+    
+    /* Remove padding from the main content area */
+    .stApp {
+        padding-top: 0 !important;
+    }
+    
+    /* Remove any top margin from the app */
+    .app-view-container {
+        margin-top: 0 !important;
     }
     </style>
     """,
