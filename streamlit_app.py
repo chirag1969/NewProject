@@ -29,7 +29,10 @@ def load_regular_sheet() -> pd.DataFrame:
 
     for sheet_name in _sheet_name_candidates():
         try:
-            return pd.read_excel(DATA_PATH, sheet_name=sheet_name)
+            # The sheet places headers in the second row (index 1), so we use
+            # ``header=1`` to promote that row to column names while dropping the
+            # extraneous first row from the data frame.
+            return pd.read_excel(DATA_PATH, sheet_name=sheet_name, header=1)
         except ValueError:
             continue
 
@@ -60,4 +63,39 @@ with regular_tab:
     except ValueError as exc:
         st.error(str(exc))
     else:
-        st.dataframe(regular_data, use_container_width=True)
+        regular_data = regular_data.copy()
+        st.markdown(
+            """
+            <style>
+            [data-testid="stDataFrame"] div[role="gridcell"],
+            [data-testid="stDataFrame"] div[role="columnheader"] {
+                font-size: 0.8rem !important;
+            }
+            </style>
+            """,
+            unsafe_allow_html=True,
+        )
+
+        integer_columns = [col for col in ("Qty", "Count") if col in regular_data.columns]
+        for column in integer_columns:
+            regular_data[column] = (
+                pd.to_numeric(regular_data[column], errors="coerce")
+                .round()
+                .astype("Int64")
+            )
+
+        float_columns = [
+            column
+            for column in regular_data.select_dtypes(include="number").columns
+            if column not in integer_columns
+        ]
+
+        format_dict: dict[str, str] = {}
+        if integer_columns:
+            format_dict.update({column: "{:.0f}" for column in integer_columns})
+        if float_columns:
+            format_dict.update({column: "{:,.2f}" for column in float_columns})
+
+        styled_regular_data = regular_data.style.format(format_dict, na_rep="")
+
+        st.dataframe(styled_regular_data, use_container_width=True, height=650)
