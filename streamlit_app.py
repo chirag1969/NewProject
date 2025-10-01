@@ -48,67 +48,10 @@ def _require_access_code() -> None:
 
 _require_access_code()
 
-# Enhanced CSS to remove all unwanted elements and optimize layout
 st.markdown(
     """
     <style>
-    /* Hide all default Streamlit elements */
     header, footer, #MainMenu {visibility: hidden;}
-    .stDeployButton {display:none;}
-    
-    /* Remove padding and margins from main container */
-    .main .block-container {
-        padding-top: 0rem;
-        padding-bottom: 0rem;
-        padding-left: 1rem;
-        padding-right: 1rem;
-        max-width: 100%;
-    }
-    
-    /* Remove padding from tabs container */
-    .stTabs [data-baseweb="tab-list"] {
-        gap: 0px;
-        padding: 0 0 0 0;
-    }
-    
-    /* Style tab content to remove extra space */
-    .stTabs [data-baseweb="tab-panel"] {
-        padding-top: 0.5rem;
-    }
-    
-    /* Remove footer completely */
-    .st-emotion-cache-1avcm9n {
-        display: none;
-    }
-    
-    /* Remove blank space above tabs */
-    .stMarkdown {
-        margin-top: 0;
-        margin-bottom: 0;
-    }
-    
-    /* Optimize data table styling */
-    [data-testid="stDataFrame"] {
-        padding: 0;
-        margin: 0;
-    }
-    
-    [data-testid="stDataFrame"] div[role="gridcell"],
-    [data-testid="stDataFrame"] div[role="columnheader"] {
-        font-size: 0.8rem !important;
-        padding: 4px 8px !important;
-    }
-    
-    /* Remove scrollbar from main content */
-    .main {
-        overflow: hidden !important;
-    }
-    
-    /* Make the entire app fit viewport height */
-    .streamlit-container {
-        height: 100vh;
-        overflow: hidden;
-    }
     </style>
     """,
     unsafe_allow_html=True,
@@ -179,84 +122,11 @@ def load_main_sheet() -> pd.DataFrame:
     )
 
 
-def display_dataframe(data: pd.DataFrame) -> None:
-    """Display a DataFrame with optimized styling and responsive height."""
-    
-    # Create a copy to avoid modifying the original
-    df = data.copy()
-    
-    # Remove completely empty rows and columns
-    df = df.dropna(how='all').dropna(axis=1, how='all')
-    
-    # Handle integer columns
-    integer_columns = [col for col in ("Qty", "Count") if col in df.columns]
-    for column in integer_columns:
-        df[column] = (
-            pd.to_numeric(df[column], errors="coerce")
-            .round()
-            .astype("Int64")
-        )
-
-    # Handle float columns
-    float_columns = [
-        column
-        for column in df.select_dtypes(include="number").columns
-        if column not in integer_columns
-    ]
-
-    # Handle date columns
-    date_columns = [
-        column
-        for column in df.columns
-        if is_datetime64_any_dtype(df[column])
-    ]
-
-    for column in date_columns:
-        df[column] = pd.to_datetime(df[column], errors="coerce")
-
-    # Configure column display
-    column_config: dict[str, Any] = {}
-
-    for column in integer_columns:
-        column_config[column] = st.column_config.NumberColumn(
-            column, format="%d", help="Integer values"
-        )
-
-    for column in float_columns:
-        column_config[column] = st.column_config.NumberColumn(
-            column, format="%.2f", help="Numeric values"
-        )
-
-    for column in date_columns:
-        column_config[column] = st.column_config.DatetimeColumn(
-            column, format="DD-MM-YYYY", help="Date values"
-        )
-
-    # Calculate dynamic height based on viewport
-    viewport_height = 600  # Approximate viewport height minus tabs and padding
-    row_height = 35  # Height per row including padding
-    header_height = 40  # Header height
-    padding = 20  # Additional padding
-    
-    max_rows = max(1, min(len(df.index), (viewport_height - header_height - padding) // row_height))
-    table_height = header_height + (max_rows * row_height) + padding
-
-    st.dataframe(
-        df,
-        use_container_width=True,
-        height=table_height,
-        column_config=column_config,
-        hide_index=True,
-    )
-
-
-# Create tabs without any spacing above
 regular_tab, main_tab = st.tabs(["Regular", "Main"])
 
 with main_tab:
     try:
         main_data = load_main_sheet()
-        display_dataframe(main_data)
     except FileNotFoundError:
         st.error(
             "The Excel workbook could not be found. Please ensure it is located at "
@@ -269,11 +139,75 @@ with main_tab:
         )
     except ValueError as exc:
         st.error(str(exc))
+    else:
+        main_data = main_data.copy()
+        st.markdown(
+            """
+            <style>
+            [data-testid="stDataFrame"] div[role="gridcell"],
+            [data-testid="stDataFrame"] div[role="columnheader"] {
+                font-size: 0.8rem !important;
+            }
+            </style>
+            """,
+            unsafe_allow_html=True,
+        )
+
+        integer_columns = [col for col in ("Qty", "Count") if col in main_data.columns]
+        for column in integer_columns:
+            main_data[column] = (
+                pd.to_numeric(main_data[column], errors="coerce")
+                .round()
+                .astype("Int64")
+            )
+
+        float_columns = [
+            column
+            for column in main_data.select_dtypes(include="number").columns
+            if column not in integer_columns
+        ]
+
+        date_columns = [
+            column
+            for column in main_data.columns
+            if is_datetime64_any_dtype(main_data[column])
+        ]
+
+        for column in date_columns:
+            main_data[column] = pd.to_datetime(main_data[column], errors="coerce")
+
+        column_config: dict[str, Any] = {}
+
+        for column in integer_columns:
+            column_config[column] = st.column_config.NumberColumn(
+                column, format="%d", help="Integer values"
+            )
+
+        for column in float_columns:
+            column_config[column] = st.column_config.NumberColumn(
+                column, format="%.2f", help="Numeric values"
+            )
+
+        for column in date_columns:
+            column_config[column] = st.column_config.DatetimeColumn(
+                column, format="DD-MM-YYYY", help="Date values"
+            )
+
+        visible_rows = min(len(main_data.index), 15)
+        row_height = 33
+        base_height = 90
+        table_height = base_height + row_height * visible_rows
+
+        st.dataframe(
+            main_data,
+            use_container_width=True,
+            height=table_height,
+            column_config=column_config,
+        )
 
 with regular_tab:
     try:
         regular_data = load_regular_sheet()
-        display_dataframe(regular_data)
     except FileNotFoundError:
         st.error(
             "The Excel workbook could not be found. Please ensure it is located at "
@@ -286,3 +220,68 @@ with regular_tab:
         )
     except ValueError as exc:
         st.error(str(exc))
+    else:
+        regular_data = regular_data.copy()
+        st.markdown(
+            """
+            <style>
+            [data-testid="stDataFrame"] div[role="gridcell"],
+            [data-testid="stDataFrame"] div[role="columnheader"] {
+                font-size: 0.8rem !important;
+            }
+            </style>
+            """,
+            unsafe_allow_html=True,
+        )
+
+        integer_columns = [col for col in ("Qty", "Count") if col in regular_data.columns]
+        for column in integer_columns:
+            regular_data[column] = (
+                pd.to_numeric(regular_data[column], errors="coerce")
+                .round()
+                .astype("Int64")
+            )
+
+        float_columns = [
+            column
+            for column in regular_data.select_dtypes(include="number").columns
+            if column not in integer_columns
+        ]
+
+        date_columns = [
+            column
+            for column in regular_data.columns
+            if is_datetime64_any_dtype(regular_data[column])
+        ]
+
+        for column in date_columns:
+            regular_data[column] = pd.to_datetime(regular_data[column], errors="coerce")
+
+        column_config: dict[str, Any] = {}
+
+        for column in integer_columns:
+            column_config[column] = st.column_config.NumberColumn(
+                column, format="%d", help="Integer values"
+            )
+
+        for column in float_columns:
+            column_config[column] = st.column_config.NumberColumn(
+                column, format="%.2f", help="Numeric values"
+            )
+
+        for column in date_columns:
+            column_config[column] = st.column_config.DatetimeColumn(
+                column, format="DD-MM-YYYY", help="Date values"
+            )
+
+        visible_rows = min(len(regular_data.index), 15)
+        row_height = 33
+        base_height = 90
+        table_height = base_height + row_height * visible_rows
+
+        st.dataframe(
+            regular_data,
+            use_container_width=True,
+            height=table_height,
+            column_config=column_config,
+        )
