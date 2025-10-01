@@ -9,6 +9,15 @@ from pandas.api.types import is_datetime64_any_dtype
 
 st.set_page_config(page_title="Workbook Viewer", layout="wide")
 
+st.markdown(
+    """
+    <style>
+    header, footer, #MainMenu {visibility: hidden;}
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
 DATA_PATH = Path(__file__).parent / "data/GP 2025 with MAIN.xlsx"
 REGULAR_SHEET_CANDIDATES: tuple[str, ...] = ("Regular", "REGULAR", "REGULAR-25")
 
@@ -43,7 +52,7 @@ def load_regular_sheet() -> pd.DataFrame:
     )
 
 
-main_tab, regular_tab = st.tabs(["Main", "Regular"])
+regular_tab, main_tab = st.tabs(["Regular", "Main"])
 
 with main_tab:
     st.write("")
@@ -117,9 +126,14 @@ with regular_tab:
                 column, format="DD-MM-YYYY", help="Date values"
             )
 
+        visible_rows = min(len(regular_data.index), 15)
+        row_height = 33
+        base_height = 90
+        table_height = base_height + row_height * visible_rows
+
         st.dataframe(
             regular_data,
             use_container_width=True,
-            height=650,
+            height=table_height,
             column_config=column_config,
         )
