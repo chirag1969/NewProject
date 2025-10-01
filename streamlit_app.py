@@ -48,7 +48,7 @@ def _require_access_code() -> None:
 
 _require_access_code()
 
-# Enhanced CSS to completely remove header space and optimize layout
+# Enhanced CSS to remove all unwanted elements and optimize layout
 st.markdown(
     """
     <style>
@@ -56,27 +56,19 @@ st.markdown(
     header, footer, #MainMenu {visibility: hidden;}
     .stDeployButton {display:none;}
     
-    /* Completely remove header space */
-    .stApp header {
-        display: none !important;
-        height: 0 !important;
-    }
-    
     /* Remove padding and margins from main container */
     .main .block-container {
-        padding-top: 1rem !important;
-        padding-bottom: 0rem !important;
+        padding-top: 0rem;
+        padding-bottom: 0rem;
         padding-left: 1rem;
         padding-right: 1rem;
         max-width: 100%;
-        margin-top: 0 !important;
     }
     
     /* Remove padding from tabs container */
     .stTabs [data-baseweb="tab-list"] {
         gap: 0px;
-        padding: 0.5rem 0 0 0;
-        margin-top: 0 !important;
+        padding: 0 0 0 0;
     }
     
     /* Style tab content to remove extra space */
@@ -93,16 +85,6 @@ st.markdown(
     .stMarkdown {
         margin-top: 0;
         margin-bottom: 0;
-    }
-    
-    /* Remove top margin from the app */
-    .element-container {
-        margin-top: 0 !important;
-    }
-    
-    /* Remove top margin from the first element */
-    div[data-testid="stVerticalBlock"] > div:first-child {
-        margin-top: 0 !important;
     }
     
     /* Optimize data table styling */
@@ -126,33 +108,6 @@ st.markdown(
     .streamlit-container {
         height: 100vh;
         overflow: hidden;
-    }
-    
-    /* Remove padding from the main content area */
-    .stApp {
-        padding-top: 0 !important;
-    }
-    
-    /* Remove any top margin from the app */
-    .app-view-container {
-        margin-top: 0 !important;
-    }
-    
-    /* Set fixed height for the main content to prevent scrolling */
-    .main .block-container {
-        height: calc(100vh - 2rem);
-        overflow-y: auto;
-        overflow-x: hidden;
-    }
-    
-    /* Hide scrollbar but keep functionality */
-    .main .block-container::-webkit-scrollbar {
-        display: none;
-    }
-    
-    /* For Firefox */
-    .main .block-container {
-        scrollbar-width: none;
     }
     </style>
     """,
@@ -278,15 +233,12 @@ def display_dataframe(data: pd.DataFrame) -> None:
         )
 
     # Calculate dynamic height based on viewport
-    # Adjusted for better fit within the viewport
-    viewport_height = 70  # Percentage of viewport height to use
+    viewport_height = 600  # Approximate viewport height minus tabs and padding
     row_height = 35  # Height per row including padding
     header_height = 40  # Header height
-    tabs_height = 50  # Height of tabs
     padding = 20  # Additional padding
     
-    # Calculate max rows based on viewport height
-    max_rows = max(1, min(len(df.index), 20))  # Limit to 20 rows max
+    max_rows = max(1, min(len(df.index), (viewport_height - header_height - padding) // row_height))
     table_height = header_height + (max_rows * row_height) + padding
 
     st.dataframe(
@@ -298,7 +250,7 @@ def display_dataframe(data: pd.DataFrame) -> None:
     )
 
 
-# Create tabs with proper padding
+# Create tabs without any spacing above
 regular_tab, main_tab = st.tabs(["Regular", "Main"])
 
 with main_tab:
