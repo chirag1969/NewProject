@@ -9,6 +9,36 @@ from pandas.api.types import is_datetime64_any_dtype
 
 st.set_page_config(page_title="Workbook Viewer", layout="wide")
 
+ACCESS_CODE = "1312"
+
+
+def _require_access_code() -> None:
+    """Prompt for the access code and halt execution until it is validated."""
+
+    if "access_granted" not in st.session_state:
+        st.session_state.access_granted = False
+
+    if st.session_state.access_granted:
+        return
+
+    st.title("Access Restricted")
+
+    with st.form("access_code"):
+        code = st.text_input("Enter access code", type="password")
+        submitted = st.form_submit_button("Submit")
+
+    if submitted:
+        if code == ACCESS_CODE:
+            st.session_state.access_granted = True
+            st.experimental_rerun()
+        else:
+            st.error("Incorrect access code. Please try again.")
+
+    st.stop()
+
+
+_require_access_code()
+
 st.markdown(
     """
     <style>
