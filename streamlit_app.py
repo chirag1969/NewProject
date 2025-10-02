@@ -48,7 +48,7 @@ def _require_access_code() -> None:
 
 _require_access_code()
 
-# 减少主容器的内边距
+# 减少主容器的内边距，保持原始标签页样式
 st.markdown(
     """
     <style>
@@ -61,21 +61,6 @@ st.markdown(
         padding-left: 1rem;
         padding-right: 1rem;
         max-width: 100%;
-    }
-    
-    /* 减少标签页的内边距 */
-    .stTabs [data-baseweb="tab-list"] {
-        gap: 2px;
-    }
-    
-    .stTabs [data-baseweb="tab"] {
-        height: 50px;
-        white-space: pre-wrap;
-        background-color: #f0f2f6;
-        border-radius: 4px 4px 0 0;
-        gap: 1px;
-        padding-left: 10px;
-        padding-right: 10px;
     }
     </style>
     """,
@@ -212,9 +197,15 @@ with regular_tab:
 
         for column in float_columns:
             # 使用会计格式显示数值，包括千位分隔符和两位小数
-            column_config[column] = st.column_config.NumberColumn(
-                column, format="$%,.2f", help="Currency values in accounting format"
-            )
+            # 但只对包含价格或金额的列应用货币格式
+            if any(keyword in column.lower() for keyword in ["price", "cost", "amount", "spend", "sales", "value", "total"]):
+                column_config[column] = st.column_config.NumberColumn(
+                    column, format="$%,.2f", help="Currency values in accounting format"
+                )
+            else:
+                column_config[column] = st.column_config.NumberColumn(
+                    column, format="%,.2f", help="Numeric values with thousand separators"
+                )
 
         for column in date_columns:
             column_config[column] = st.column_config.DatetimeColumn(
@@ -294,9 +285,15 @@ with main_tab:
 
         for column in float_columns:
             # 使用会计格式显示数值，包括千位分隔符和两位小数
-            column_config[column] = st.column_config.NumberColumn(
-                column, format="$%,.2f", help="Currency values in accounting format"
-            )
+            # 但只对包含价格或金额的列应用货币格式
+            if any(keyword in column.lower() for keyword in ["price", "cost", "amount", "spend", "sales", "value", "total"]):
+                column_config[column] = st.column_config.NumberColumn(
+                    column, format="$%,.2f", help="Currency values in accounting format"
+                )
+            else:
+                column_config[column] = st.column_config.NumberColumn(
+                    column, format="%,.2f", help="Numeric values with thousand separators"
+                )
 
         for column in date_columns:
             column_config[column] = st.column_config.DatetimeColumn(
