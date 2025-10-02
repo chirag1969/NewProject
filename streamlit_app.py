@@ -48,10 +48,35 @@ def _require_access_code() -> None:
 
 _require_access_code()
 
+# 减少主容器的内边距
 st.markdown(
     """
     <style>
     header, footer, #MainMenu {visibility: hidden;}
+    
+    /* 减少主容器的内边距 */
+    .main .block-container {
+        padding-top: 1rem;
+        padding-bottom: 1rem;
+        padding-left: 1rem;
+        padding-right: 1rem;
+        max-width: 100%;
+    }
+    
+    /* 减少标签页的内边距 */
+    .stTabs [data-baseweb="tab-list"] {
+        gap: 2px;
+    }
+    
+    .stTabs [data-baseweb="tab"] {
+        height: 50px;
+        white-space: pre-wrap;
+        background-color: #f0f2f6;
+        border-radius: 4px 4px 0 0;
+        gap: 1px;
+        padding-left: 10px;
+        padding-right: 10px;
+    }
     </style>
     """,
     unsafe_allow_html=True,
@@ -90,10 +115,11 @@ def load_regular_sheet() -> pd.DataFrame:
 
     for sheet_name in _sheet_name_candidates():
         try:
-            # The sheet places headers in the second row (index 1), so we use
-            # ``header=1`` to promote that row to column names while dropping the
-            # extraneous first row from the data frame.
-            return pd.read_excel(DATA_PATH, sheet_name=sheet_name, header=1)
+            # 使用header=1来将第2行作为列标题，跳过第1行
+            # 然后手动跳过第2行（索引为1），从第3行（索引为2）开始加载数据
+            df = pd.read_excel(DATA_PATH, sheet_name=sheet_name, header=1)
+            # 跳过索引为1的行（即第2行），从第3行开始保留数据
+            return df.drop(1).reset_index(drop=True)
         except ValueError:
             continue
 
@@ -122,88 +148,8 @@ def load_main_sheet() -> pd.DataFrame:
     )
 
 
+# 修改标签页顺序，使Regular成为默认选中的标签页
 regular_tab, main_tab = st.tabs(["Regular", "Main"])
-
-with main_tab:
-    try:
-        main_data = load_main_sheet()
-    except FileNotFoundError:
-        st.error(
-            "The Excel workbook could not be found. Please ensure it is located at "
-            f"'{DATA_PATH}'."
-        )
-    except ImportError:
-        st.error(
-            "Reading the Excel workbook requires optional dependencies such as "
-            "'openpyxl'. Please install them and try again."
-        )
-    except ValueError as exc:
-        st.error(str(exc))
-    else:
-        main_data = main_data.copy()
-        st.markdown(
-            """
-            <style>
-            [data-testid="stDataFrame"] div[role="gridcell"],
-            [data-testid="stDataFrame"] div[role="columnheader"] {
-                font-size: 0.8rem !important;
-            }
-            </style>
-            """,
-            unsafe_allow_html=True,
-        )
-
-        integer_columns = [col for col in ("Qty", "Count") if col in main_data.columns]
-        for column in integer_columns:
-            main_data[column] = (
-                pd.to_numeric(main_data[column], errors="coerce")
-                .round()
-                .astype("Int64")
-            )
-
-        float_columns = [
-            column
-            for column in main_data.select_dtypes(include="number").columns
-            if column not in integer_columns
-        ]
-
-        date_columns = [
-            column
-            for column in main_data.columns
-            if is_datetime64_any_dtype(main_data[column])
-        ]
-
-        for column in date_columns:
-            main_data[column] = pd.to_datetime(main_data[column], errors="coerce")
-
-        column_config: dict[str, Any] = {}
-
-        for column in integer_columns:
-            column_config[column] = st.column_config.NumberColumn(
-                column, format="%d", help="Integer values"
-            )
-
-        for column in float_columns:
-            column_config[column] = st.column_config.NumberColumn(
-                column, format="%.2f", help="Numeric values"
-            )
-
-        for column in date_columns:
-            column_config[column] = st.column_config.DatetimeColumn(
-                column, format="DD-MM-YYYY", help="Date values"
-            )
-
-        visible_rows = min(len(main_data.index), 15)
-        row_height = 33
-        base_height = 90
-        table_height = base_height + row_height * visible_rows
-
-        st.dataframe(
-            main_data,
-            use_container_width=True,
-            height=table_height,
-            column_config=column_config,
-        )
 
 with regular_tab:
     try:
@@ -265,8 +211,9 @@ with regular_tab:
             )
 
         for column in float_columns:
+            # 使用会计格式显示数值，包括千位分隔符和两位小数
             column_config[column] = st.column_config.NumberColumn(
-                column, format="%.2f", help="Numeric values"
+                column, format="$%,.2f", help="Currency values in accounting format"
             )
 
         for column in date_columns:
@@ -281,6 +228,88 @@ with regular_tab:
 
         st.dataframe(
             regular_data,
+            use_container_width=True,
+            height=table_height,
+            column_config=column_config,
+        )
+
+with main_tab:
+    try:
+        main_data = load_main_sheet()
+    except FileNotFoundError:
+        st.error(
+            "The Excel workbook could not be found. Please ensure it is located at "
+            f"'{DATA_PATH}'."
+        )
+    except ImportError:
+        st.error(
+            "Reading the Excel workbook requires optional dependencies such as "
+            "'openpyxl'. Please install them and try again."
+        )
+    except ValueError as exc:
+        st.error(str(exc))
+    else:
+        main_data = main_data.copy()
+        st.markdown(
+            """
+            <style>
+            [data-testid="stDataFrame"] div[role="gridcell"],
+            [data-testid="stDataFrame"] div[role="columnheader"] {
+                font-size: 0.8rem !important;
+            }
+            </style>
+            """,
+            unsafe_allow_html=True,
+        )
+
+        integer_columns = [col for col in ("Qty", "Count") if col in main_data.columns]
+        for column in integer_columns:
+            main_data[column] = (
+                pd.to_numeric(main_data[column], errors="coerce")
+                .round()
+                .astype("Int64")
+            )
+
+        float_columns = [
+            column
+            for column in main_data.select_dtypes(include="number").columns
+            if column not in integer_columns
+        ]
+
+        date_columns = [
+            column
+            for column in main_data.columns
+            if is_datetime64_any_dtype(main_data[column])
+        ]
+
+        for column in date_columns:
+            main_data[column] = pd.to_datetime(main_data[column], errors="coerce")
+
+        column_config: dict[str, Any] = {}
+
+        for column in integer_columns:
+            column_config[column] = st.column_config.NumberColumn(
+                column, format="%d", help="Integer values"
+            )
+
+        for column in float_columns:
+            # 使用会计格式显示数值，包括千位分隔符和两位小数
+            column_config[column] = st.column_config.NumberColumn(
+                column, format="$%,.2f", help="Currency values in accounting format"
+            )
+
+        for column in date_columns:
+            column_config[column] = st.column_config.DatetimeColumn(
+                column, format="DD-MM-YYYY", help="Date values"
+            )
+
+        visible_rows = min(len(main_data.index), 15)
+        row_height = 33
+        base_height = 90
+        table_height = base_height + row_height * visible_rows
+
+        st.dataframe(
+            main_data,
             use_container_width=True,
             height=table_height,
             column_config=column_config,
