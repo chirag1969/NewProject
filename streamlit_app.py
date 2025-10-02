@@ -57,7 +57,7 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-DATA_PATH = Path(__file__).parent / "data/GP 2025 with MAIN.xlsx"
+DATA_PATH = Path(__file__).parent / "data/GP Current Month.xlsx"
 REGULAR_SHEET_CANDIDATES: tuple[str, ...] = ("Regular", "REGULAR", "REGULAR-25")
 MAIN_SHEET_CANDIDATES: tuple[str, ...] = ("Main", "MAIN")
 
