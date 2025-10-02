@@ -48,25 +48,48 @@ def _require_access_code() -> None:
 
 _require_access_code()
 
-# 减少主容器的内边距，特别是垂直方向的内边距
+# 移除紫色部分和减少内边距的CSS
 st.markdown(
     """
     <style>
+    /* 隐藏Streamlit默认的头部和页脚 */
     header, footer, #MainMenu {visibility: hidden;}
     
-    /* 减少主容器的内边距，特别是垂直方向 */
-    .main .block-container {
-        padding-top: 0.5rem;
-        padding-bottom: 0.5rem;
-        padding-left: 1rem;
-        padding-right: 1rem;
-        max-width: 100%;
+    /* 移除整个应用顶部和底部的紫色部分 */
+    .stApp {
+        margin-top: 0 !important;
+        padding-top: 0 !important;
     }
     
-    /* 减少标签页的垂直间距 */
+    /* 移除主内容区域的顶部和底部内边距 */
+    .main .block-container {
+        padding-top: 0.2rem !important;
+        padding-bottom: 0.2rem !important;
+        padding-left: 1rem !important;
+        padding-right: 1rem !important;
+        max-width: 100% !important;
+    }
+    
+    /* 减少标签页的上下边距 */
     .stTabs {
-        margin-top: 0.5rem;
-        margin-bottom: 0.5rem;
+        margin-top: 0 !important;
+        margin-bottom: 0.2rem !important;
+    }
+    
+    /* 减少标签页内容的内边距 */
+    .stTabs [data-baseweb="tab-panel"] {
+        padding-top: 0.2rem !important;
+    }
+    
+    /* 减少数据表格的上下边距 */
+    .element-container {
+        margin-top: 0 !important;
+        margin-bottom: 0 !important;
+    }
+    
+    /* 减少整个应用的垂直间距 */
+    .streamlit-container {
+        margin-top: -2rem !important;
     }
     </style>
     """,
